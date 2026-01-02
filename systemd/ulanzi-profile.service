@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/cp -T %h/.config/ulanzi/default.yaml %h/.config/ulanzi/_current.yaml
+ExecStart=/usr/bin/cp -T %h/.config/ulanzi/config.yaml %h/.config/ulanzi/_current.yaml
 RemainAfterExit=yes
 
 [Install]
