@@ -4,7 +4,6 @@ After=network.target
 
 [Service]
 Type=simple
-User=%u
 ExecStart=%h/.local/bin/ulanzi-daemon %h/.config/ulanzi/config.yaml
 Restart=on-failure
 RestartSec=5
