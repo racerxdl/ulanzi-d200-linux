@@ -13,396 +13,111 @@ A Linux application for managing the Ulanzi D200 StreamDeck device. Configure bu
 - 🔄 **Hot-Reload** - Update configuration without restarting
 - 🌙 **Background Daemon** - Run as a systemd service
 
-## Installation
-
-### Prerequisites
-
-- Python 3.8+
-- Linux with USB support
-- `xdotool` (for keyboard shortcuts): `sudo apt install xdotool`
-
-### Setup
-
-1. Clone the repository:
-```bash
-cd /home/lucas/Works/VibeCodedProjects/ulanzi
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Install the package:
-```bash
-pip install -e .
-```
-
-4. Install udev rule for device access:
-```bash
-sudo cp 99-ulanzi.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-Reconnect your device after this step.
-
-5. Create configuration directory:
-```bash
-mkdir -p ~/.config/ulanzi
-mkdir -p ~/.local/share/ulanzi
-```
-
 ## Quick Start
 
-### 0. Install Udev Rule (Required!)
+1. **Install udev rule:**
+   ```bash
+   sudo cp 99-ulanzi.rules /etc/udev/rules.d/
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ```
 
-```bash
-sudo cp 99-ulanzi.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
+2. **Install package:**
+   ```bash
+   pip install -e .
+   ```
 
-Then reconnect your device.
+3. **Configure:**
+   ```bash
+   ulanzi-manager generate-config ~/.config/ulanzi/config.yaml
+   # Edit the file and then:
+   ulanzi-manager configure ~/.config/ulanzi/config.yaml
+   ```
 
-### 1. Generate Example Configuration
+4. **Run daemon:**
+   ```bash
+   ulanzi-daemon ~/.config/ulanzi/config.yaml
+   ```
 
-```bash
-ulanzi-manager generate-config ~/.config/ulanzi/config.yaml
-```
+## Documentation
 
-### 2. Edit Configuration
-
-Edit `~/.config/ulanzi/config.yaml` to define your buttons and actions.
-
-### 3. Test Configuration
-
-```bash
-ulanzi-manager validate ~/.config/ulanzi/config.yaml
-```
-
-### 4. Configure Device
-
-```bash
-ulanzi-manager configure ~/.config/ulanzi/config.yaml
-```
-
-### 5. Start Daemon
-
-```bash
-ulanzi-daemon ~/.config/ulanzi/config.yaml
-```
+- [📖 Start Here](docs/START_HERE.md)
+- [🚀 Quick Start & Setup](docs/QUICKSTART.md)
+- [⚙️ Setup Guide](docs/SETUP.md)
+- [🔧 Install Guide](docs/INSTALL.md)
+- [🐛 Debug & Troubleshooting](docs/DEBUG.md)
+- [📋 Quick Reference](docs/QUICK_REFERENCE.md)
+- [🎨 Icon Generation](docs/ICON_GENERATION.md)
+- [🎬 OBS API Reference](docs/OBS_API_REFERENCE.md)
+- [📦 Project Summary](docs/PROJECT_SUMMARY.md)
 
 ## Configuration
 
-### Basic Structure
+See [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) for complete config examples and [docs/START_HERE.md](docs/START_HERE.md) for guided setup.
 
-```yaml
-# Global settings
-brightness: 100
-
-# Label styling
-label_style:
-  Align: bottom
-  Color: 0xFFFFFF
-  FontName: Roboto
-  ShowTitle: true
-  Size: 10
-  Weight: 80
-
-# OBS Studio settings (optional)
-obs:
-  host: localhost
-  port: 4444
-  password: null
-
-# Button definitions (13 buttons total, 0-12)
-buttons:
-  - image: ./icons/button1.png
-    label: Button 1
-    action: command
-    params:
-      cmd: "echo 'Button pressed'"
-
-  - null  # Empty button
-```
-
-### Button Layout
-
+**Button Layout:**
 ```
 0  1  2  3  4
 5  6  7  8  9
-10 11 12
+10 11 12 13 (clock)
 ```
 
-### Action Types
+**Action Types:** `command`, `app`, `key`, `obs` (scenes, sources, recording, streaming)
 
-#### Command Action
-Execute shell commands:
-```yaml
-action: command
-params:
-  cmd: "firefox"
-```
+## Commands
 
-#### App Action
-Launch applications:
-```yaml
-action: app
-params:
-  name: "firefox"
-```
-
-#### Key Action
-Simulate keyboard input (requires `xdotool`):
-```yaml
-action: key
-params:
-  keys: "ctrl+alt+t"
-```
-
-#### OBS Action
-Control OBS Studio via WebSocket:
-
-**Toggle Scene:**
-```yaml
-action: obs
-params:
-  action: toggle_scene
-  scene1: "Scene 1"
-  scene2: "Scene 2"
-```
-
-**Set Scene:**
-```yaml
-action: obs
-params:
-  action: set_scene
-  scene: "Scene 1"
-```
-
-**Toggle Source Visibility:**
-```yaml
-action: obs
-params:
-  action: toggle_source
-  scene: "Scene 1"
-  source: "Camera"
-```
-
-**Toggle Recording:**
-```yaml
-action: obs
-params:
-  action: toggle_recording
-```
-
-**Toggle Streaming:**
-```yaml
-action: obs
-params:
-  action: toggle_streaming
-```
-
-## CLI Commands
-
-### Status
-Check device connection:
-```bash
-ulanzi-manager status
-```
-
-### Brightness
-Set display brightness (0-100):
-```bash
-ulanzi-manager brightness 80
-```
-
-### Configure
-Apply configuration from file:
-```bash
-ulanzi-manager configure ~/.config/ulanzi/config.yaml
-```
-
-### Test Image
-Test an image on a specific button:
-```bash
-ulanzi-manager test-image 0 ~/icon.png --label "Test"
-```
-
-### Validate
-Validate configuration file:
-```bash
-ulanzi-manager validate ~/.config/ulanzi/config.yaml
-```
-
-### Generate Config
-Generate example configuration:
-```bash
-ulanzi-manager generate-config config.yaml
-```
-
-### Daemon
-Start background daemon:
-```bash
-ulanzi-daemon ~/.config/ulanzi/config.yaml
-```
-
-## Systemd Service
-
-### Install Service
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp systemd/ulanzi-daemon.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-```
-
-### Enable and Start
-
-```bash
-systemctl --user enable ulanzi-daemon
-systemctl --user start ulanzi-daemon
-```
-
-### Check Status
-
-```bash
-systemctl --user status ulanzi-daemon
-```
-
-### View Logs
-
-```bash
-journalctl --user -u ulanzi-daemon -f
-```
+| Task | Command |
+|------|---------|
+| Check device | `ulanzi-manager status` |
+| Set brightness | `ulanzi-manager brightness 80` |
+| Apply config | `ulanzi-manager configure config.yaml` |
+| Validate config | `ulanzi-manager validate config.yaml` |
+| Test button image | `ulanzi-manager test-image 0 icon.png` |
+| Debug (show button presses) | `ulanzi-manager debug` |
+| Start daemon | `ulanzi-daemon config.yaml` |
 
 ## Image Preparation
 
-Button images should be:
-- **Format:** PNG
-- **Size:** 196×196 pixels
-- **Color Space:** RGB or RGBA
+Button images: PNG, 196×196 pixels, RGB/RGBA.
 
-### Create Icons
-
-Using ImageMagick:
-```bash
-convert -size 196x196 xc:blue -pointsize 40 -fill white -gravity center \
-  -annotate +0+0 "OBS" icon.png
+**Auto-generate icons** (recommended):
+```yaml
+buttons:
+  - icon_spec:
+      type: text
+      color: '#FF6B00'
+      text: "REC"
+      text_color: '#FFFFFF'
+      font_size: 70
+    label: "Record"
+    action: obs
+    params:
+      action: toggle_recording
 ```
 
-Using Python PIL:
-```python
-from PIL import Image, ImageDraw, ImageFont
-
-img = Image.new('RGB', (196, 196), color='blue')
-draw = ImageDraw.Draw(img)
-draw.text((98, 98), "OBS", fill='white', anchor='mm')
-img.save('icon.png')
-```
+See [docs/ICON_GENERATION.md](docs/ICON_GENERATION.md) for full icon spec options.
 
 ## Troubleshooting
 
-### Device Not Found / Open Failed
-```
-RuntimeError: Ulanzi D200 device not found
-ERROR: open failed
-```
+| Issue | Solution |
+|-------|----------|
+| Device not found | `sudo cp 99-ulanzi.rules /etc/udev/rules.d/`, reload, reconnect |
+| OBS not connecting | Enable WebSocket Server in OBS (Tools → WebSocket Server Settings) |
+| Keyboard shortcuts fail | Install xdotool: `sudo apt install xdotool` |
+| Permission denied | Ensure udev rule installed; reconnect device |
 
-**Solution:** Install the udev rule:
-```bash
-sudo cp 99-ulanzi.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
+See [docs/DEBUG.md](docs/DEBUG.md) for detailed troubleshooting.
 
-Then reconnect your device. Verify with:
-```bash
-lsusb | grep 2207
-```
+## Project Info
 
-### OBS Connection Failed
-```
-Failed to connect to OBS
-```
+**Logs:** `~/.local/share/ulanzi/daemon.log` (view with `tail -f`)
 
-**Solution:** Ensure OBS WebSocket server is enabled:
-1. Open OBS
-2. Tools → WebSocket Server Settings
-3. Enable WebSocket Server
-4. Note the port (default: 4444)
+**License:** MIT
 
-### Keyboard Shortcuts Not Working
-```
-xdotool not found
-```
-
-**Solution:** Install xdotool:
-```bash
-sudo apt install xdotool
-```
-
-### Permission Denied on USB Device
-```
-PermissionError: [Errno 13] Permission denied
-```
-
-**Solution:** Make sure the udev rule is installed:
-```bash
-sudo cp 99-ulanzi.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-Then reconnect the device.
-
-## Example Configuration
-
-See `config.yaml` for a complete example with OBS integration.
-
-## Development
-
-### Project Structure
-
-```
-ulanzi/
-├── ulanzi_manager/
-│   ├── __init__.py
-│   ├── cli.py              # CLI interface
-│   ├── daemon.py           # Background daemon
-│   ├── device.py           # USB device communication
-│   ├── config.py           # Configuration parser
-│   └── actions.py          # Action handlers
-├── systemd/
-│   └── ulanzi-daemon.service
-├── setup.py
-├── requirements.txt
-└── README.md
-```
-
-### Logging
-
-Daemon logs are written to:
-```
-~/.local/share/ulanzi/daemon.log
-```
-
-View real-time logs:
-```bash
-tail -f ~/.local/share/ulanzi/daemon.log
-```
-
-## License
-
-MIT
-
-## References
-
+**References:**
 - [Ulanzi D200 Protocol](https://github.com/redphx/strmdck)
-- [OBS WebSocket Protocol](https://github.com/obsproject/obs-websocket)
+- [OBS WebSocket](https://github.com/obsproject/obs-websocket)
 
+---
 
-## Disclaimer
-
-Yes, I vibecoded that and manually fixed some wrong stuff.
+*Yes, I vibecoded that and manually fixed some wrong stuff.*

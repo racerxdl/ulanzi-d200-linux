@@ -1,0 +1,108 @@
+# Ulanzi D200 Configuration Example with Auto-Generated Icons
+# This file demonstrates the new icon_spec feature for auto-generating icons
+
+# Global settings
+brightness: 100
+
+# Label styling for all buttons
+label_style:
+  Align: bottom
+  Color: 0xFFFFFF
+  FontName: Roboto
+  ShowTitle: true
+  Size: 10
+  Weight: 80
+
+# OBS Studio settings (optional)
+obs:
+  host: localhost
+  port: 4444
+  password: null
+
+# Button definitions with auto-generated icons
+buttons:
+  # Button 0 - Simple solid color icon
+  - icon_spec:
+      type: solid
+      color: '#0066FF'
+    label: "Blue"
+    action: command
+    params:
+      cmd: "echo 'Blue button'"
+
+  # Button 1 - Text icon with OBS control
+  - icon_spec:
+      type: text
+      color: '#FF6600'
+      text: "REC"
+      text_color: '#FFFFFF'
+      font_size: 70
+    label: "Record"
+    action: obs
+    params:
+      action: toggle_recording
+
+  # Button 2 - Gradient icon
+  - icon_spec:
+      type: gradient
+      color: '#0066FF'
+      text_color: '#FF6600'
+    label: "Gradient"
+    action: command
+    params:
+      cmd: "echo 'Gradient button'"
+
+  # Button 3 - Scene control with text icon
+  - icon_spec:
+      type: text
+      color: '#1a1a1a'
+      text: "S1"
+      text_color: '#00FF00'
+      font_size: 80
+    label: "Scene 1"
+    action: obs
+    params:
+      action: set_scene
+      scene: "Gaming"
+
+  # Button 4 - Another text icon
+  - icon_spec:
+      type: text
+      color: '#1a1a1a'
+      text: "S2"
+      text_color: '#00FF00'
+      font_size: 80
+    label: "Scene 2"
+    action: obs
+    params:
+      action: set_scene
+      scene: "Desktop"
+
+  # Button 5 - Red solid color
+  - icon_spec:
+      type: solid
+      color: 'red'
+    label: "Stop"
+    action: obs
+    params:
+      action: toggle_recording
+
+  # Button 6 - OBS text icon
+  - icon_spec:
+      type: text
+      color: '#CC0000'
+      text: "OBS"
+      text_color: '#FFFFFF'
+      font_size: 60
+    label: "OBS"
+    action: command
+    params:
+      cmd: "obs &"
+
+  # Button 7-12 - Empty slots
+  - null
+  - null
+  - null
+  - null
+  - null
+  - null

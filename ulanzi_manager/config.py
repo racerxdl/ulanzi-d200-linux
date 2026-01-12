@@ -4,7 +4,7 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class ButtonConfig:
     action_type: str  # 'command', 'obs', 'app', 'key'
     action_params: Dict[str, Any]
     state: int = 0
+    icon_spec: Optional[Dict[str, Any]] = field(default=None)  # Icon generation spec
 
 
 @dataclass
@@ -50,7 +51,12 @@ class ConfigParser:
         with open(config_file, 'r') as f:
             data = yaml.safe_load(f) or {}
 
-        return ConfigParser._parse_config(data, config_file.parent)
+        config = ConfigParser._parse_config(data, config_file.parent)
+
+        # Generate icons from specs if needed
+        ConfigParser._generate_icons(config, config_file.parent)
+
+        return config
 
     @staticmethod
     def _parse_config(data: Dict, base_path: Path) -> Config:
@@ -96,10 +102,11 @@ class ConfigParser:
                 image_path = base_path / image_path
             image = str(image_path)
 
-        label = data.get('label', f'Button {index}')
+        label = data.get('label', '')
         action_type = data.get('action', 'command')
         action_params = data.get('params', {})
         state = data.get('state', 0)
+        icon_spec = data.get('icon_spec')
 
         return ButtonConfig(
             index=index,
@@ -107,8 +114,33 @@ class ConfigParser:
             label=label,
             action_type=action_type,
             action_params=action_params,
-            state=state
+            state=state,
+            icon_spec=icon_spec
         )
+
+    @staticmethod
+    def _generate_icons(config: Config, base_path: Path) -> None:
+        """Generate icons from specs and update image paths"""
+        try:
+            from .icon_generator import IconGenerator
+        except ImportError:
+            logger.warning("Pillow not installed, skipping icon generation")
+            return
+
+        icon_dir = base_path / 'icons'
+        icon_dir.mkdir(exist_ok=True)
+        generator = IconGenerator(cache_dir=icon_dir)
+
+        for button in config.buttons:
+            if button.icon_spec:
+                try:
+                    logger.info(f"Generating icon for button {button.index}")
+                    # Use specific filename and always regenerate
+                    icon_path = generator.generate_from_dict(button.icon_spec, button_index=button.index, force=True)
+                    button.image = str(icon_path)
+                except Exception as e:
+                    logger.error(f"Failed to generate icon for button {button.index}: {e}")
+                    raise
 
     @staticmethod
     def validate(config: Config) -> List[str]:
@@ -122,8 +154,25 @@ class ConfigParser:
             errors.append("obs.port must be between 1 and 65535")
 
         for button in config.buttons:
+            # Image is required either from file or icon_spec
+            if not button.image and not button.icon_spec:
+                errors.append(f"Button {button.index}: must specify either 'image' or 'icon_spec'")
+
             if button.image and not Path(button.image).exists():
                 errors.append(f"Button {button.index}: image file not found: {button.image}")
+
+            # Validate icon_spec if present
+            if button.icon_spec:
+                try:
+                    from .icon_generator import IconSpec
+                    spec = IconSpec(button.icon_spec)
+                    spec_errors = spec.validate()
+                    for error in spec_errors:
+                        errors.append(f"Button {button.index}: icon_spec error: {error}")
+                except ImportError:
+                    logger.warning("Pillow not installed, cannot validate icon_spec")
+                except Exception as e:
+                    errors.append(f"Button {button.index}: icon_spec error: {str(e)}")
 
             if button.action_type not in ['command', 'obs', 'app', 'key']:
                 errors.append(f"Button {button.index}: invalid action type: {button.action_type}")
