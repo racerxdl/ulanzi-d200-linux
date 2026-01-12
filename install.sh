@@ -14,23 +14,12 @@ if [ ! -f "setup.py" ]; then
     exit 1
 fi
 
-# Step 1: Create virtual environment
-echo "1. Creating virtual environment..."
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-    echo "   ✓ Virtual environment created"
-else
-    echo "   ✓ Virtual environment already exists"
-fi
+# Step 1: Validate setup
+echo "1. Validating setup..."
+echo "   ✓ Ready to install"
 
-# Step 2: Activate and install
-echo "2. Installing package..."
-source venv/bin/activate
-pip install -q -e .
-echo "   ✓ Package installed"
-
-# Step 3: Install udev rule
-echo "3. Installing udev rule..."
+# Step 2: Install udev rule
+echo "2. Installing udev rule..."
 if [ -w "/etc/udev/rules.d/" ]; then
     sudo cp 99-ulanzi.rules /etc/udev/rules.d/
     sudo udevadm control --reload-rules
@@ -43,40 +32,40 @@ else
     echo "     sudo udevadm trigger"
 fi
 
-# Step 4: Create config directories
-echo "4. Creating configuration directories..."
+# Step 3: Create config directories
+echo "3. Creating configuration directories..."
 mkdir -p ~/.config/ulanzi
 mkdir -p ~/.local/share/ulanzi
 echo "   ✓ Directories created"
 
-# Step 5: Create ~/.local/bin/ulanzi-daemon wrapper
-echo "5. Creating ~/.local/bin/ulanzi-daemon wrapper..."
+# Step 4: Setup ~/.local/ulanzi with venv
+echo "4. Setting up ~/.local/ulanzi with virtual environment..."
+mkdir -p ~/.local/ulanzi
 mkdir -p ~/.local/bin
-cat > ~/.local/bin/ulanzi-daemon << 'EOF'
+
+# Create venv in ~/.local/ulanzi
+echo "   Creating virtual environment..."
+python3 -m venv ~/.local/ulanzi/venv
+
+# Install package in the new venv
+echo "   Installing package..."
+~/.local/ulanzi/venv/bin/pip install -q -e .
+
+# Create a simple wrapper that uses the venv
+cat > ~/.local/bin/ulanzi-daemon << 'WRAPPER'
 #!/bin/bash
-# Wrapper for ulanzi-daemon that activates the virtual environment
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+# Wrapper for ulanzi-daemon using ~/.local/ulanzi/venv
+exec ~/.local/ulanzi/venv/bin/ulanzi-daemon "$@"
+WRAPPER
 
-# Try to find the venv - check common locations
-if [ -d "$SCRIPT_DIR/venv/bin/ulanzi-daemon" ] || [ -x "$SCRIPT_DIR/venv/bin/ulanzi-daemon" ]; then
-    DAEMON="$SCRIPT_DIR/venv/bin/ulanzi-daemon"
-elif [ -x "$(which ulanzi-daemon 2>/dev/null)" ]; then
-    DAEMON="$(which ulanzi-daemon)"
-else
-    # Fallback: try to use python -m
-    DAEMON="python3 -m ulanzi_manager.daemon"
-fi
-
-exec $DAEMON "$@"
-EOF
 chmod +x ~/.local/bin/ulanzi-daemon
-echo "   ✓ Wrapper created at ~/.local/bin/ulanzi-daemon"
+echo "   ✓ Virtual environment setup complete at ~/.local/ulanzi"
+echo "   ✓ Wrapper script installed at ~/.local/bin/ulanzi-daemon"
 
-# Step 6: Generate example config
-echo "6. Generating example configuration..."
+# Step 5: Generate example config
+echo "5. Generating example configuration..."
 if [ ! -f ~/.config/ulanzi/config.yaml ]; then
-    ulanzi-manager generate-config ~/.config/ulanzi/config.yaml
+    ~/.local/ulanzi/venv/bin/ulanzi-manager generate-config ~/.config/ulanzi/config.yaml
     echo "   ✓ Configuration generated at ~/.config/ulanzi/config.yaml"
 else
     echo "   ✓ Configuration already exists"
