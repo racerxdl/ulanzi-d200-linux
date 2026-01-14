@@ -11,7 +11,7 @@ setup(
         "hidapi==0.14.0",
         "pyyaml==6.0.1",
         "obs-websocket-py==0.5.3",
-        "pillow==10.1.0",
+        "pillow==10.3.0",
         "python-daemon==3.0.1",
         "deepdiff==8.6.1",
     ],

@@ -2,6 +2,6 @@ pyusb==1.2.1
 hidapi==0.14.0
 pyyaml==6.0.1
 obsws-python==1.8.0
-pillow==10.1.0
+pillow==10.3.0
 python-daemon==3.0.1
 deepdiff==8.6.1
