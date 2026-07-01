@@ -168,12 +168,31 @@ class UlanziDevice:
         invalid_bytes = [b'\x00', b'\x7c']
         dummy_str = ''
         dummy_retries = 0
+        max_retries = 200
 
         while True:
+            if dummy_retries > max_retries:
+                raise RuntimeError(
+                    f"Could not find a valid packet layout after {max_retries} retries. "
+                    "This is a known D200 protocol quirk (0x00/0x7c landing on a 1024-byte "
+                    "chunk boundary) — try changing one of the button icons slightly."
+                )
+
             # Create ZIP with button data
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                 manifest = {}
+
+                # Pre-icon padding: written FIRST so that changing its size
+                # actually shifts where icon bytes fall relative to the
+                # 1024-byte packet boundaries. The original implementation
+                # only resized dummy.txt (written last), which cannot help
+                # when the offending byte lives inside an icon's own
+                # compressed data — that byte's position is fixed regardless
+                # of what's written after it, causing an infinite retry loop.
+                if dummy_retries > 0:
+                    dummy_str += ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=8 * dummy_retries))
+                zf.writestr('_pad.txt', dummy_str)
 
                 for idx, config in buttons.items():
                     row = idx // 5
@@ -207,12 +226,6 @@ class UlanziDevice:
                 # Add manifest
                 zf.writestr('manifest.json', json.dumps(manifest, sort_keys=True, separators=(',', ':'), indent=2))
                 logger.debug(f"Manifest: {json.dumps(manifest, indent=2)}")
-
-                # Add dummy file to avoid protocol bug
-                if dummy_retries > 0:
-                    dummy_str += ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=8*dummy_retries))
-
-                zf.writestr('dummy.txt', dummy_str)
 
             # Get ZIP data and validate for problematic bytes
             zip_data = zip_buffer.getvalue()
