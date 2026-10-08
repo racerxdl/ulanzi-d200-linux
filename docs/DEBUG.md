@@ -11,6 +11,17 @@ Existing configuration files are never replaced by first-run provisioning.
 Explicit `ulanzi-manager validate` still reports a missing file rather than
 creating one, so a mistyped validation path cannot silently create a profile.
 
+## Background Editing and Application Icons
+
+**Editar fundo atual** reopens the saved background settings. Newly uploaded originals are immutable `mosaic-source-<hash>` files in the configured icons directory; keep them alongside the generated tiles when backing up configurations and layouts. They are intentionally absent from the button icon picker. Legacy backgrounds are reconstructed from existing tiles, so previously cropped or darkened detail cannot be restored. The editor previews the actual generated tiles, including the wide crop when enabled; **Aplicar fundo nos botões** changes the draft and **Salvar e aplicar** persists it to the device.
+
+Choosing an installed application on buttons 1–13 imports its icon without launching the app. Missing icons preserve the current image; import errors appear as a UI notification. Button 14 never replaces its GIF or statistics merely because an application action was selected. If PNG/SVG decoding or theme resolution fails, check the native GTK/GdkPixbuf dependencies in [INSTALL.md](INSTALL.md), the system MIME database, and the web-service journal:
+
+```bash
+journalctl --user -u ulanzi-web.service -n 100 --no-pager
+```
+
+
 ## Debug Mode - Identify Button Presses
 
 The easiest way to figure out which physical button corresponds to which index is to use debug mode.

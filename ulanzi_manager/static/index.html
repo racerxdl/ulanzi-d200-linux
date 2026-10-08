@@ -111,16 +111,18 @@
               <strong>Prévia completa</strong>
             </div>
             <div id="backgroundOverview" class="background-overview" aria-label="Prévia do fundo atual"></div>
+            <button id="editBackgroundButton" class="button secondary" type="button" disabled>Editar fundo atual</button>
           </div>
           <div id="mosaicEditor" class="mosaic-editor" hidden>
-            <div class="mosaic-preview-frame" aria-label="Prévia da nova imagem de fundo">
-              <img id="mosaicPreviewImage" alt="">
-              <span id="mosaicPreviewShade"></span>
+            <div>
+              <div id="mosaicPreview" class="background-overview mosaic-preview-frame" aria-label="Prévia exata dos 13 botões e da tela larga"></div>
+              <small id="mosaicPreviewStatus" class="hint" role="status" aria-live="polite"></small>
             </div>
             <div class="mosaic-controls">
               <label class="field">
-                <span>Tamanho do fundo <output id="mosaicScaleValue">100%</output></span>
-                <input id="mosaicScale" type="range" min="100" max="200" step="5" value="100">
+                <span>Redimensionar fundo <output id="mosaicScaleValue">100%</output></span>
+                <input id="mosaicScale" type="range" min="25" max="200" step="5" value="100">
+                <small class="hint">25–200%. Abaixo de 100%, a imagem fica centralizada com bordas pretas; 100% preenche a tela.</small>
               </label>
               <label class="field">
                 <span>Escurecer fundo <output id="mosaicDarknessValue">0%</output></span>
@@ -132,6 +134,7 @@
                 Incluir tela larga no fundo
               </label>
               <button id="applyMosaicButton" class="button primary" type="button">Aplicar fundo nos botões</button>
+              <small class="hint">Fundos antigos são recuperados dos recortes atuais; partes já cortadas e escurecidas não podem ser restauradas. Novas imagens mantêm o original.</small>
             </div>
           </div>
         </div>

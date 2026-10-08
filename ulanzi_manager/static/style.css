@@ -122,9 +122,8 @@ main { width: min(1440px, calc(100% - 48px)); margin: 28px auto 56px; }
 .background-wide-slot { position: relative; grid-column: span 2; display: grid; place-items: center; aspect-ratio: 458 / 196; overflow: hidden; border: 1px dashed #344050; border-radius: 5px; color: var(--muted); font-size: clamp(.45rem, 1vw, .65rem); text-align: center; }
 .background-wide-slot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
 .mosaic-editor { grid-template-columns: minmax(220px, 1.4fr) minmax(190px, 1fr); align-items: center; }
-.mosaic-preview-frame { position: relative; aspect-ratio: 5 / 3; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: #05070a; }
-.mosaic-preview-frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform .12s ease; }
-.mosaic-preview-frame span { position: absolute; inset: 0; pointer-events: none; }
+.mosaic-preview-frame { padding: 4px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: #000; }
+.mosaic-preview-frame .background-tile { background: #000; }
 .mosaic-controls { display: grid; gap: 14px; }
 .mosaic-controls .button { width: 100%; }
 

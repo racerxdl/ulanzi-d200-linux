@@ -19,13 +19,14 @@ import unicodedata
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
 import yaml
 from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 
 from ulanzi_manager.config import ConfigParser, parse_metrics_style, METRICS_FONT_FILES
+from ulanzi_manager.application_icons import import_application_icon
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ ALLOWED_OBS_ACTIONS = {
 ICON_NAME_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
 GENERATED_ICON_RE = re.compile(r"--scale-\d+\.png$")
 MOSAIC_TILE_RE = re.compile(r"^mosaic-[0-9a-f]{10}-(?:\d{2}|wide)\.png$")
+MOSAIC_SOURCE_RE = re.compile(r"^mosaic-source-([0-9a-f]{64})\.(?:png|jpeg|webp)$")
 COMPOSITE_ICON_RE = re.compile(r"--background-[0-9a-f]{10}\.png$")
 LAYOUT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_LAYOUT_NAME_LENGTH = 60
@@ -169,6 +171,10 @@ class WebApp:
                 "password": obs.get("password"),
             },
             "buttons": buttons,
+            "background": (
+                self._background_settings(raw["background"])
+                if raw.get("background") is not None else self._recover_mosaic_source(buttons)
+            ),
             "icons": self.list_icons(),
         }
 
@@ -186,6 +192,7 @@ class WebApp:
             for name in self._available_icons()
             if not GENERATED_ICON_RE.search(name)
             and not MOSAIC_TILE_RE.fullmatch(name)
+            and not MOSAIC_SOURCE_RE.fullmatch(name)
             and not COMPOSITE_ICON_RE.search(name)
         )
 
@@ -284,6 +291,18 @@ class WebApp:
                 except (OSError, UnicodeError, configparser.Error, ValueError) as exc:
                     logger.warning("Ignoring invalid application entry %s: %s", path, exc)
         return sorted(applications, key=lambda app: (app["name"].casefold(), app["id"]))
+
+    def prepare_application_icon(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        application_id = payload.get("id")
+        application = next(
+            (entry for entry in self.list_applications() if entry["id"] == application_id),
+            None,
+        )
+        if application is None:
+            raise ValidationError("Aplicativo não encontrado na lista de aplicativos instalados")
+        return {
+            "filename": import_application_icon(application["desktop_file"], self.icons_dir),
+        }
 
     @staticmethod
     def _layout_name(payload: Dict[str, Any]) -> str:
@@ -498,6 +517,10 @@ class WebApp:
                 candidate.unlink()
 
     def _build_document(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        background = payload.get("background")
+        if background is not None:
+            background = self._background_settings(background)
+            self._mosaic_source_bytes(background["source"])
         try:
             brightness = int(payload.get("brightness", 100))
         except (TypeError, ValueError) as exc:
@@ -653,6 +676,7 @@ class WebApp:
                 "password": obs_input.get("password") or None,
             },
             "buttons": buttons,
+            "background": background,
         }
 
     @staticmethod
@@ -773,26 +797,132 @@ class WebApp:
         logger.info("Icon saved to %s", destination)
         return filename
 
-    def upload_mosaic(self, payload: Dict[str, Any]) -> List[str]:
-        """Render a static image into the button faces and optional wide display."""
-        encoded = str(payload.get("data") or "")
-        if "," in encoded:
-            encoded = encoded.split(",", 1)[1]
-        try:
-            image_bytes = base64.b64decode(encoded, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise ValidationError("Arquivo de imagem inválido") from exc
-        if not image_bytes or len(image_bytes) > MAX_IMAGE_BYTES:
-            raise ValidationError("A imagem deve ter no máximo 8 MB")
+    def _recover_mosaic_source(self, buttons: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Recover legacy background pixels without baking overlaid icons into the source."""
+        canvas = Image.new("RGBA", (980, 588), (0, 0, 0, 255))
+        recovered = False
+        include_wide = False
+        for index, button in enumerate(buttons):
+            name = button.get("background_tile") or ""
+            if index == WIDE_DISPLAY_INDEX:
+                if button["display_mode"] not in {"background", "stats"}:
+                    continue
+                if not name and button["display_mode"] == "background":
+                    name = button.get("image") or ""
+            if not name:
+                continue
+            path = self.icons_dir / name
+            if path.is_symlink() or path.resolve().parent != self.icons_dir.resolve():
+                raise ValidationError("Origem da imagem de fundo inválida")
+            try:
+                with Image.open(path) as tile:
+                    if max(tile.size) > MAX_IMAGE_DIMENSION or getattr(tile, "is_animated", False):
+                        continue
+                    if index == WIDE_DISPLAY_INDEX:
+                        face = tile.convert("RGBA").resize((392, 196), Image.Resampling.LANCZOS)
+                        position = (588, 392)
+                        include_wide = True
+                    else:
+                        face = ImageOps.fit(tile.convert("RGBA"), (196, 196), Image.Resampling.LANCZOS)
+                        row, column = divmod(index, 5)
+                        position = (column * 196, row * 196)
+                    canvas.alpha_composite(face, position)
+                    recovered = True
+            except (UnidentifiedImageError, OSError):
+                # A legacy configuration with a missing tile remains readable.
+                continue
+        if not recovered:
+            return None
+        encoded = io.BytesIO()
+        canvas.save(encoded, format="PNG", optimize=True)
+        image_bytes = encoded.getvalue()
+        name = f"mosaic-source-{hashlib.sha256(image_bytes).hexdigest()}.png"
+        self._store_mosaic_source(name, image_bytes)
+        return {
+            "source": name, "scale": 100, "darkness": 0, "include_wide": include_wide,
+        }
+
+    @staticmethod
+    def _background_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValidationError("Ajustes da imagem de fundo inválidos")
+        source = payload.get("source")
+        if not isinstance(source, str) or not MOSAIC_SOURCE_RE.fullmatch(source):
+            raise ValidationError("Origem da imagem de fundo inválida")
         try:
             scale = int(payload.get("scale", 100))
             darkness = int(payload.get("darkness", 0))
         except (TypeError, ValueError) as exc:
             raise ValidationError("Ajustes da imagem de fundo inválidos") from exc
-        if not 100 <= scale <= 200:
-            raise ValidationError("O tamanho do fundo deve estar entre 100% e 200%")
+        if not 25 <= scale <= 200:
+            raise ValidationError("O tamanho do fundo deve estar entre 25% e 200%")
         if not 0 <= darkness <= 80:
             raise ValidationError("O escurecimento deve estar entre 0% e 80%")
+        include_wide = payload.get("include_wide", False)
+        if not isinstance(include_wide, bool):
+            raise ValidationError("A opção de incluir a tela larga deve ser verdadeira ou falsa")
+        return {
+            "source": source,
+            "scale": scale,
+            "darkness": darkness,
+            "include_wide": include_wide,
+        }
+
+    def _mosaic_source_bytes(self, name: str) -> bytes:
+        match = MOSAIC_SOURCE_RE.fullmatch(name)
+        if not match:
+            raise ValidationError("Origem da imagem de fundo inválida")
+        path = self.icons_dir / name
+        if path.is_symlink() or path.resolve().parent != self.icons_dir.resolve():
+            raise ValidationError("Origem da imagem de fundo inválida")
+        try:
+            with path.open("rb") as handle:
+                image_bytes = handle.read(MAX_IMAGE_BYTES + 1)
+        except OSError as exc:
+            raise ValidationError("A imagem original do fundo não está disponível; envie outra imagem") from exc
+        if (
+            not image_bytes
+            or len(image_bytes) > MAX_IMAGE_BYTES
+            or hashlib.sha256(image_bytes).hexdigest() != match[1]
+        ):
+            raise ValidationError("Origem da imagem de fundo inválida")
+        return image_bytes
+
+    def _store_mosaic_source(self, name: str, image_bytes: bytes) -> None:
+        destination = self.icons_dir / name
+        if destination.exists() or destination.is_symlink():
+            if self._mosaic_source_bytes(name) != image_bytes:
+                raise ValidationError("Origem da imagem de fundo inválida")
+            return
+        with tempfile.NamedTemporaryFile(
+            "wb", dir=self.icons_dir, prefix=".mosaic-source-", delete=False
+        ) as output:
+            output_path = Path(output.name)
+        try:
+            output_path.write_bytes(image_bytes)
+            os.replace(output_path, destination)
+        finally:
+            if output_path.exists():
+                output_path.unlink()
+
+    def upload_mosaic(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Render every edit from its immutable original, never from generated tiles."""
+        if payload.get("source"):
+            if payload.get("data"):
+                raise ValidationError("Escolha uma imagem original ou um novo arquivo, não ambos")
+            settings = self._background_settings(payload)
+            image_bytes = self._mosaic_source_bytes(settings["source"])
+        else:
+            encoded = str(payload.get("data") or "")
+            if "," in encoded:
+                encoded = encoded.split(",", 1)[1]
+            try:
+                image_bytes = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValidationError("Arquivo de imagem inválido") from exc
+            if not image_bytes or len(image_bytes) > MAX_IMAGE_BYTES:
+                raise ValidationError("A imagem deve ter no máximo 8 MB")
+            settings = None
 
         canvas_size = (5 * 196, 3 * 196)
         try:
@@ -801,31 +931,36 @@ class WebApp:
                     raise ValidationError("A imagem não pode ultrapassar 4096 px")
                 if getattr(image, "is_animated", False):
                     raise ValidationError("O mosaico requer uma imagem estática")
-                source = ImageOps.exif_transpose(image).convert("RGBA")
-                canvas = ImageOps.fit(
-                    source,
-                    canvas_size,
-                    Image.Resampling.LANCZOS,
-                )
-                if scale != 100:
-                    scaled_size = tuple(
-                        round(dimension * scale / 100)
-                        for dimension in canvas_size
+                if image.format not in {"PNG", "JPEG", "WEBP"}:
+                    raise ValidationError("Use uma imagem PNG, JPG ou WebP")
+                if settings is None:
+                    source_name = (
+                        f"mosaic-source-{hashlib.sha256(image_bytes).hexdigest()}."
+                        f"{image.format.lower()}"
                     )
-                    scaled = canvas.resize(scaled_size, Image.Resampling.LANCZOS)
-                    left = (scaled.width - canvas_size[0]) // 2
-                    top = (scaled.height - canvas_size[1]) // 2
-                    canvas = scaled.crop((
-                        left,
-                        top,
-                        left + canvas_size[0],
-                        top + canvas_size[1],
+                    settings = self._background_settings({**payload, "source": source_name})
+                scale = settings["scale"]
+                darkness = settings["darkness"]
+                source = ImageOps.exif_transpose(image).convert("RGBA")
+                self._store_mosaic_source(settings["source"], image_bytes)
+                fitted = ImageOps.fit(source, canvas_size, Image.Resampling.LANCZOS)
+                if scale != 100:
+                    scaled_size = tuple(round(dimension * scale / 100) for dimension in canvas_size)
+                    fitted = fitted.resize(scaled_size, Image.Resampling.LANCZOS)
+                if scale > 100:
+                    left = (fitted.width - canvas_size[0]) // 2
+                    top = (fitted.height - canvas_size[1]) // 2
+                    fitted = fitted.crop((
+                        left, top, left + canvas_size[0], top + canvas_size[1],
                     ))
+                canvas = Image.new("RGBA", canvas_size, (0, 0, 0, 255))
+                canvas.alpha_composite(fitted, (
+                    (canvas_size[0] - fitted.width) // 2,
+                    (canvas_size[1] - fitted.height) // 2,
+                ))
                 if darkness:
                     shade = Image.new(
-                        "RGBA",
-                        canvas_size,
-                        (0, 0, 0, round(255 * darkness / 100)),
+                        "RGBA", canvas_size, (0, 0, 0, round(255 * darkness / 100))
                     )
                     canvas = Image.alpha_composite(canvas, shade)
         except (UnidentifiedImageError, OSError) as exc:
@@ -834,16 +969,18 @@ class WebApp:
         digest = hashlib.sha256(
             image_bytes + f"\0{scale}\0{darkness}".encode("ascii")
         ).hexdigest()[:10]
-        filenames = []
+        tiles = []
         for index in range(13):
             row, column = divmod(index, 5)
-            tile = canvas.crop((
-                column * 196,
-                row * 196,
-                (column + 1) * 196,
-                (row + 1) * 196,
-            ))
-            filename = f"mosaic-{digest}-{index + 1:02d}.png"
+            tiles.append((f"{index + 1:02d}", canvas.crop((
+                column * 196, row * 196, (column + 1) * 196, (row + 1) * 196,
+            ))))
+        if settings["include_wide"]:
+            wide = canvas.crop((3 * 196, 2 * 196, 5 * 196, 3 * 196))
+            tiles.append(("wide", wide.resize((458, 196), Image.Resampling.LANCZOS)))
+        filenames = []
+        for suffix, tile in tiles:
+            filename = f"mosaic-{digest}-{suffix}.png"
             destination = self.icons_dir / filename
             with tempfile.NamedTemporaryFile(
                 "wb", dir=self.icons_dir, suffix=".png", delete=False
@@ -856,25 +993,8 @@ class WebApp:
                 if output_path.exists():
                     output_path.unlink()
             filenames.append(filename)
-        if bool(payload.get("include_wide")):
-            wide = canvas.crop((3 * 196, 2 * 196, 5 * 196, 3 * 196))
-            wide = wide.resize((458, 196), Image.Resampling.LANCZOS)
-            filename = f"mosaic-{digest}-wide.png"
-            destination = self.icons_dir / filename
-            with tempfile.NamedTemporaryFile(
-                "wb", dir=self.icons_dir, suffix=".png", delete=False
-            ) as output:
-                output_path = Path(output.name)
-            try:
-                wide.save(output_path, format="PNG", optimize=True)
-                os.replace(output_path, destination)
-            finally:
-                if output_path.exists():
-                    output_path.unlink()
-            filenames.append(filename)
-
-        logger.info("Mosaic saved as %d button tiles", len(filenames))
-        return filenames
+        logger.info("Mosaic saved from %s", settings["source"])
+        return {"filenames": filenames, "background": settings}
 
     @staticmethod
     def apply() -> Dict[str, Any]:
@@ -1057,12 +1177,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             if path == "/api/apply":
                 self._read_json()
                 self._json(self.app.apply())
+            elif path == "/api/applications/icon":
+                self._json(
+                    self.app.prepare_application_icon(self._read_json()),
+                    HTTPStatus.CREATED,
+                )
             elif path == "/api/icons":
                 filename = self.app.upload_icon(self._read_json())
                 self._json({"filename": filename}, HTTPStatus.CREATED)
             elif path == "/api/mosaic":
-                filenames = self.app.upload_mosaic(self._read_json())
-                self._json({"filenames": filenames}, HTTPStatus.CREATED)
+                self._json(self.app.upload_mosaic(self._read_json()), HTTPStatus.CREATED)
             elif path == "/api/layouts":
                 self._json(
                     self.app.save_layout(self._read_json()),
