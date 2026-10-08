@@ -14,7 +14,7 @@ This happens because the device needs proper USB permissions. The Ulanzi D200 (V
 
 Run the installation script:
 ```bash
-cd /home/lucas/Works/VibeCodedProjects/ulanzi
+cd /path/to/ulanzi-d200-linux
 bash install.sh
 ```
 
@@ -29,7 +29,7 @@ This will:
 
 ```bash
 # 1. Setup Python environment
-cd /home/lucas/Works/VibeCodedProjects/ulanzi
+cd /path/to/ulanzi-d200-linux
 python3 -m venv venv
 source venv/bin/activate
 pip install -e .

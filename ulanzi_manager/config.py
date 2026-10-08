@@ -1,12 +1,97 @@
 """Configuration file parser for Ulanzi Manager"""
 
 import yaml
+import re
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+METRICS_FONT_FILES = {
+    "sans": {
+        "normal": "DejaVuSans.ttf", "bold": "DejaVuSans-Bold.ttf",
+        "italic": "DejaVuSans-Oblique.ttf", "bold-italic": "DejaVuSans-BoldOblique.ttf",
+    },
+    "mono": {
+        "normal": "DejaVuSansMono.ttf", "bold": "DejaVuSansMono-Bold.ttf",
+        "italic": "DejaVuSansMono-Oblique.ttf", "bold-italic": "DejaVuSansMono-BoldOblique.ttf",
+    },
+    "serif": {
+        "normal": "DejaVuSerif.ttf", "bold": "DejaVuSerif-Bold.ttf",
+        "italic": "DejaVuSerif-Italic.ttf", "bold-italic": "DejaVuSerif-BoldItalic.ttf",
+    },
+    "ubuntu": {
+        "normal": "Ubuntu-R.ttf", "bold": "Ubuntu-R.ttf",
+        "italic": "Ubuntu-RI.ttf", "bold-italic": "Ubuntu-RI.ttf",
+    },
+    "ubuntu-mono": {
+        "normal": "UbuntuMono-R.ttf", "bold": "UbuntuMono-R.ttf",
+        "italic": "UbuntuMono-RI.ttf", "bold-italic": "UbuntuMono-RI.ttf",
+    },
+    "noto-sans": {
+        "normal": "NotoSans-Regular.ttf", "bold": "NotoSans-Bold.ttf",
+        "italic": "NotoSans-Italic.ttf", "bold-italic": "NotoSans-BoldItalic.ttf",
+    },
+    "noto-serif": {
+        "normal": "NotoSerif-Regular.ttf", "bold": "NotoSerif-Bold.ttf",
+        "italic": "NotoSerif-Italic.ttf", "bold-italic": "NotoSerif-BoldItalic.ttf",
+    },
+    "liberation-sans": {
+        "normal": "LiberationSans-Regular.ttf", "bold": "LiberationSans-Bold.ttf",
+        "italic": "LiberationSans-Italic.ttf", "bold-italic": "LiberationSans-BoldItalic.ttf",
+    },
+    "liberation-serif": {
+        "normal": "LiberationSerif-Regular.ttf", "bold": "LiberationSerif-Bold.ttf",
+        "italic": "LiberationSerif-Italic.ttf", "bold-italic": "LiberationSerif-BoldItalic.ttf",
+    },
+}
+
+
+def parse_metrics_style(raw=None) -> Dict[str, Any]:
+    """Validate the shared UI/daemon metrics display contract."""
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("Estilo das métricas inválido")
+    style = {
+        "layout": raw.get("layout", "columns"),
+        "view": raw.get("view", "text"),
+        "size": raw.get("size", 30),
+        "font_family": raw.get("font_family", "sans"),
+        "font_style": raw.get("font_style", "normal"),
+        "colors": {},
+    }
+    if style["layout"] not in ("columns", "rows", "compact"):
+        raise ValueError("Layout das métricas inválido")
+    if style["view"] not in ("text", "htop", "history"):
+        raise ValueError("Visualização das métricas inválida")
+    size = style["size"]
+    if isinstance(size, bool) or not isinstance(size, int) or not 18 <= size <= 48:
+        raise ValueError("Tamanho das métricas deve estar entre 18 e 48 px")
+    family, font_style = style["font_family"], style["font_style"]
+    if not isinstance(family, str) or family not in METRICS_FONT_FILES:
+        raise ValueError("Família da fonte das métricas inválida")
+    if not isinstance(font_style, str) or font_style not in METRICS_FONT_FILES[family]:
+        raise ValueError("Estilo da fonte das métricas inválido")
+    # Migrate layouts saved before per-metric colors; return only the new schema.
+    colors = raw.get("colors", {})
+    if not isinstance(colors, dict):
+        raise ValueError("Cores individuais das métricas inválidas")
+    for metric, line_color in (("cpu", "#ff6b35"), ("mem", "#52c97a"), ("gpu", "#00ccff")):
+        palette = colors.get(metric, {})
+        if not isinstance(palette, dict):
+            raise ValueError("Cores individuais das métricas inválidas")
+        style["colors"][metric] = {}
+        for key in ("color", "label_color", "line_color"):
+            default = line_color if key == "line_color" else raw.get(key, "#ffffff")
+            color = palette.get(key, default)
+            if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+                raise ValueError("Cor das métricas deve estar no formato #RRGGBB")
+            style["colors"][metric][key] = color.lower()
+    return style
 
 
 @dataclass
@@ -17,8 +102,12 @@ class ButtonConfig:
     label: str
     action_type: str  # 'command', 'obs', 'app', 'key'
     action_params: Dict[str, Any]
+    action_enabled: bool = True
+    display_mode: str = "buttons"
     state: int = 0
     icon_spec: Optional[Dict[str, Any]] = field(default=None)  # Icon generation spec
+    background_tile: Optional[str] = None
+    metrics_style: Dict[str, Any] = field(default_factory=parse_metrics_style)
 
 
 @dataclass
@@ -105,8 +194,18 @@ class ConfigParser:
         label = data.get('label', '')
         action_type = data.get('action', 'command')
         action_params = data.get('params', {})
+        action_enabled = bool(data.get('action_enabled', index != 13))
+        default_display_mode = 'stats'
+        if index == 13 and image:
+            default_display_mode = (
+                'gif' if Path(image).suffix.lower() == '.gif' else 'background'
+            )
+        display_mode = str(data.get('display_mode', default_display_mode))
         state = data.get('state', 0)
         icon_spec = data.get('icon_spec')
+        background_tile = data.get('background_tile')
+        if background_tile:
+            background_tile = str(base_path / background_tile)
 
         return ButtonConfig(
             index=index,
@@ -114,6 +213,10 @@ class ConfigParser:
             label=label,
             action_type=action_type,
             action_params=action_params,
+            action_enabled=action_enabled,
+            display_mode=display_mode,
+            background_tile=background_tile,
+            metrics_style=parse_metrics_style(data.get('metrics_style')),
             state=state,
             icon_spec=icon_spec
         )
@@ -154,9 +257,22 @@ class ConfigParser:
             errors.append("obs.port must be between 1 and 65535")
 
         for button in config.buttons:
-            # Image is required either from file or icon_spec
-            if not button.image and not button.icon_spec:
-                errors.append(f"Button {button.index}: must specify either 'image' or 'icon_spec'")
+            stats_display = (
+                button.index == 13 and button.display_mode == 'stats'
+            )
+            if (
+                button.index == 13
+                and button.display_mode not in ('gif', 'stats', 'background')
+            ):
+                errors.append(
+                    "Button 13: display_mode must be 'gif', 'stats', or 'background'"
+                )
+
+            # Statistics are rendered by the host and do not require an image.
+            if not stats_display and not button.image and not button.icon_spec:
+                errors.append(
+                    f"Button {button.index}: must specify either 'image' or 'icon_spec'"
+                )
 
             if button.image and not Path(button.image).exists():
                 errors.append(f"Button {button.index}: image file not found: {button.image}")
@@ -173,6 +289,9 @@ class ConfigParser:
                     logger.warning("Pillow not installed, cannot validate icon_spec")
                 except Exception as e:
                     errors.append(f"Button {button.index}: icon_spec error: {str(e)}")
+            if not button.action_enabled:
+                continue
+
 
             if button.action_type not in ['command', 'obs', 'app', 'key']:
                 errors.append(f"Button {button.index}: invalid action type: {button.action_type}")

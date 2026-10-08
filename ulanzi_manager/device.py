@@ -1,15 +1,16 @@
 """USB device communication for Ulanzi D200"""
 
+import hashlib
 import struct
-import io, time, random
+import io
 import zipfile
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Optional, Callable
 from dataclasses import dataclass
 from enum import IntEnum
-from deepdiff import DeepDiff
 
 try:
     import hid
@@ -25,12 +26,14 @@ PRODUCT_ID = 0x0019
 # Command protocols
 class CommandProtocol(IntEnum):
     OUT_SET_BUTTONS = 0x0001
+    OUT_GET_BASE = 0x0003
     OUT_SET_SMALL_WINDOW_DATA = 0x0006
     OUT_SET_BRIGHTNESS = 0x000a
     OUT_SET_LABEL_STYLE = 0x000b
     OUT_PARTIALLY_UPDATE_BUTTONS = 0x000d
     IN_BUTTON = 0x0101
     IN_BUTTON_2 = 0x0102
+    IN_CONFIGURATION_REQUEST = 0x010b
     IN_DEVICE_INFO = 0x0303
 
 
@@ -46,10 +49,7 @@ class UlanziDevice:
     """Ulanzi D200 device controller"""
 
     PACKET_SIZE = 1024
-    CHUNK_SIZE = 1016
     HEADER = b'\x7c\x7c'
-    BUTTON_COUNT = 14  # 13 regular buttons (0-12) + 1 clock button (13)
-    ICON_SIZE = 196
 
     def __init__(self, device_path: Optional[str] = None):
         """Initialize device connection"""
@@ -59,6 +59,7 @@ class UlanziDevice:
         self.device = None
         self.device_path = device_path
         self._button_callback: Optional[Callable[[ButtonPress], None]] = None
+        self.configuration_requested = False
         self._connect()
 
     def _connect(self):
@@ -73,7 +74,13 @@ class UlanziDevice:
                 raise RuntimeError(
                     f"Ulanzi D200 device not found (VID: {VENDOR_ID:04x}, PID: {PRODUCT_ID:04x})"
                 )
-            device_info = devices[0]
+            device_info = next(
+                (
+                    candidate for candidate in devices
+                    if candidate.get('interface_number') == 0
+                ),
+                devices[0]
+            )
             self.device = hid.device()
             self.device.open_path(device_info['path'])
 
@@ -81,48 +88,67 @@ class UlanziDevice:
         logger.info("Connected to Ulanzi D200 device")
 
     def close(self):
-        """Close device connection"""
-        if self.device:
-            self.device.close()
+        """Close device connection. Safe to call more than once."""
+        device, self.device = self.device, None
+        if device:
+            device.close()
             logger.info("Disconnected from device")
+
+    def drain_input(self, limit: int = 256) -> int:
+        """Discard reports queued before actions become active."""
+        if not self.device:
+            return 0
+
+        discarded = 0
+        for _ in range(limit):
+            data = self.device.read(self.PACKET_SIZE)
+            if not data:
+                break
+            discarded += 1
+        return discarded
 
     def set_button_callback(self, callback: Callable[[ButtonPress], None]):
         """Set callback for button presses"""
         self._button_callback = callback
 
     def read_button_press(self) -> Optional[ButtonPress]:
-        """Read button press from device (non-blocking)"""
+        """Read one button report without hiding transport failures."""
         if not self.device:
             return None
 
-        try:
-            data = self.device.read(self.PACKET_SIZE)
-            if not data or len(data) < 8:
-                return None
-
-            # Parse packet header
-            header = bytes(data[0:2])
-            if header != self.HEADER:
-                return None
-
-            command = struct.unpack('>H', bytes(data[2:4]))[0]
-            if command != CommandProtocol.IN_BUTTON and command != CommandProtocol.IN_BUTTON_2:
-                return None
-
-            # Parse button data
-            button_data = bytes(data[8:12])
-            state = button_data[0]
-            index = button_data[1]
-            pressed = button_data[3] == 0x01
-
-            button_press = ButtonPress(index=index, pressed=pressed, state=state)
-            if self._button_callback:
-                self._button_callback(button_press)
-            return button_press
-
-        except Exception as e:
-            logger.debug(f"Error reading button press: {e}")
+        # A hidapi handle remains bound to the removed USB device after a
+        # power cycle. Let read failures reach the daemon so systemd starts a
+        # fresh process, opens the new device, and reapplies the saved layout.
+        data = self.device.read(self.PACKET_SIZE)
+        if not data or len(data) < 8:
             return None
+
+        header = bytes(data[0:2])
+        if header != self.HEADER:
+            return None
+
+        command = struct.unpack('>H', bytes(data[2:4]))[0]
+        if command == CommandProtocol.IN_CONFIGURATION_REQUEST:
+            # Full-upload font/ZIP ACKs are consumed by the post-upload barrier.
+            # An unsolicited request during normal operation means the firmware
+            # UI needs its saved configuration again (e.g. after a hot restart).
+            self.configuration_requested = True
+            return None
+        if command not in (
+            CommandProtocol.IN_BUTTON,
+            CommandProtocol.IN_BUTTON_2
+        ):
+            return None
+
+        button_data = bytes(data[8:12])
+        state = button_data[0]
+        index = button_data[1]
+        pressed = button_data[3] == 0x01
+
+        button_press = ButtonPress(index=index, pressed=pressed, state=state)
+        if self._button_callback:
+            self._button_callback(button_press)
+        return button_press
 
     def set_brightness(self, brightness: int):
         """Set display brightness (0-100)"""
@@ -146,119 +172,152 @@ class UlanziDevice:
         self._send_command(CommandProtocol.OUT_SET_LABEL_STYLE, payload)
         logger.debug("Set label style")
 
-    def set_small_window_data(self, data: Dict, force=False):
+    def set_small_window_data(self, data: Dict):
         """Set small window data (status display)"""
-        from datetime import datetime, timezone
-        #if not force and not DeepDiff(self._small_window_data, data):
-        #    return False
+        from datetime import datetime
 
         mode = data.get('mode', 1)  # 0=STATS, 1=CLOCK, 2=BACKGROUND
         cpu = data.get('cpu', 0)
         mem = data.get('mem', 0)
         gpu = data.get('gpu', 0)
         time_str = data.get('time', datetime.now().strftime('%H:%M:%S'))
-
         payload = f'{mode}|{cpu}|{mem}|{time_str}|{gpu}'.encode('utf-8')
         self._send_command(CommandProtocol.OUT_SET_SMALL_WINDOW_DATA, payload)
 
-    def set_buttons(self, buttons: Dict[int, Dict]) -> bool:
-        """Set button configuration with images."""
+    def _synchronize_firmware(self):
+        """Use GETBASE as a barrier before reusing the firmware's shared ZIP file."""
+        self.drain_input()
+        self._send_command(CommandProtocol.OUT_GET_BASE, b'')
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            data = bytes(self.device.read(self.PACKET_SIZE))
+            if (
+                len(data) >= 8 and data[:2] == self.HEADER
+                and struct.unpack('>H', data[2:4])[0] == CommandProtocol.IN_DEVICE_INFO
+            ):
+                try:
+                    info = json.loads(data[8:].split(b'\x00', 1)[0])
+                except (ValueError, UnicodeDecodeError) as error:
+                    raise RuntimeError("Invalid D200 firmware response") from error
+                if not isinstance(info, dict) or info.get('error') not in (0, '0'):
+                    raise RuntimeError(f"D200 firmware is not ready: {info}")
+                return
+            time.sleep(0.01)
+        raise TimeoutError("D200 firmware did not respond to synchronization")
+
+    def set_buttons(self, buttons: Dict[int, Dict], partial: bool = False) -> bool:
+        """Set or partially update button configuration with images."""
         manifest = {}
-        images_added = 0
-        invalid_bytes = [b'\x00', b'\x7c']
-        dummy_str = ''
-        dummy_retries = 0
+        icons = {}
 
-        while True:
-            # Create ZIP with button data
+        for idx, config in buttons.items():
+            row = idx // 5
+            col = idx % 5
+            key = f"{col}_{row}"
+            button_data = {
+                'State': config.get('state', 0),
+                'ViewParam': [{}],
+            }
+            if idx == 13 and not partial:
+                # Slot 3_2 is the 458×196 information display. Its native
+                # modes are statistics (0), clock (1), and background (2).
+                button_data['SmallViewMode'] = int(
+                    config.get('small_view_mode', 2)
+                )
+
+            if config:
+                if idx != 13 and 'label' in config:
+                    button_data['ViewParam'][0]['Text'] = config['label']
+
+                image_data = config.get('image_data')
+                image_path = config.get('image')
+                if image_data is not None:
+                    icon_name = config.get('image_name', f'button-{idx}.png')
+                    archive_path = f'icons/{icon_name}'
+                    icons[archive_path] = image_data
+                    button_data['ViewParam'][0]['Icon'] = archive_path
+                elif image_path:
+                    image_path_obj = Path(image_path)
+                    if image_path_obj.exists():
+                        icon_name = image_path_obj.name
+                        archive_path = f'icons/{icon_name}'
+                        icons[archive_path] = image_path_obj.read_bytes()
+                        button_data['ViewParam'][0]['Icon'] = archive_path
+                        logger.debug(
+                            f"Added image for button {idx}: {image_path}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Image not found for button {idx}: {image_path}"
+                        )
+
+            manifest[key] = button_data
+
+        manifest_data = json.dumps(
+            manifest,
+            sort_keys=True,
+            separators=(',', ':')
+        )
+        logger.debug(f"Manifest: {json.dumps(manifest, indent=2)}")
+
+        cache_digest = hashlib.sha256()
+        cache_digest.update(b'partial' if partial else b'full')
+        cache_digest.update(manifest_data.encode('utf-8'))
+        for archive_path in sorted(icons):
+            cache_digest.update(archive_path.encode('utf-8'))
+            cache_digest.update(b'\0')
+            cache_digest.update(icons[archive_path])
+        cache_key = cache_digest.digest()
+        archive_cache = getattr(self, '_button_archive_cache', {})
+        cached_archive = archive_cache.get(cache_key)
+
+        if cached_archive is not None:
+            zip_data = cached_archive
+        else:
             zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                manifest = {}
-
-                for idx, config in buttons.items():
-                    row = idx // 5
-                    col = idx % 5
-                    key = f"{col}_{row}"
-
-                    button_data = {
-                        'State': config.get('state', 0),
-                        'ViewParam': [{}],
-                    }
-
-                    if config:
-                        if 'label' in config:
-                            button_data['ViewParam'][0]['Text'] = config['label']
-
-                        if 'image' in config:
-                            image_path = config['image']
-                            image_path_obj = Path(image_path)
-                            if image_path_obj.exists():
-                                icon_name = image_path_obj.name
-                                with open(image_path, 'rb') as f:
-                                    zf.writestr(f'icons/{icon_name}', f.read())
-                                button_data['ViewParam'][0]['Icon'] = f'icons/{icon_name}'
-                                images_added += 1
-                                logger.debug(f"Added image for button {idx}: {image_path}")
-                            else:
-                                logger.warning(f"Image not found for button {idx}: {image_path}")
-
-                    manifest[key] = button_data
-
-                # Add manifest
-                zf.writestr('manifest.json', json.dumps(manifest, sort_keys=True, separators=(',', ':'), indent=2))
-                logger.debug(f"Manifest: {json.dumps(manifest, indent=2)}")
-
-                # Add dummy file to avoid protocol bug
-                if dummy_retries > 0:
-                    dummy_str += ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=8*dummy_retries))
-
-                zf.writestr('dummy.txt', dummy_str)
-
-            # Get ZIP data and validate for problematic bytes
+            with zipfile.ZipFile(
+                zip_buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=1
+            ) as zf:
+                zf.writestr('manifest.json', manifest_data)
+                for archive_path, image_data in icons.items():
+                    zf.writestr(archive_path, image_data)
             zip_data = zip_buffer.getvalue()
-            file_size = len(zip_data)
+            if len(archive_cache) >= 512:
+                archive_cache.clear()
+            archive_cache[cache_key] = zip_data
+            self._button_archive_cache = archive_cache
 
-            # Check for invalid bytes at specific positions
-            valid = True
-            for i in range(1016, file_size, 1024):
-                if zip_data[i:i+1] in invalid_bytes:
-                    valid = False
-                    break
-
-            if valid:
-                break
-
-            dummy_retries += 1
-            time.sleep(0.05)
-
-        # Send ZIP data
-        self._send_file(zip_data)
-        logger.info(f"Set {len(buttons)} button(s) with {images_added} image(s)")
-
+        if partial:
+            self._send_file(
+                zip_data,
+                CommandProtocol.OUT_PARTIALLY_UPDATE_BUTTONS
+            )
+        else:
+            self._synchronize_firmware()
+            self._send_file(zip_data)
+            self._synchronize_firmware()
+        log = logger.debug if partial else logger.info
+        log(
+            f"Set {len(buttons)} button(s) with {len(icons)} image(s)"
+        )
         return True
 
-    def _apply_protocol_workaround(self, data: bytes) -> bytes:
-        """Apply workaround for protocol bug with certain byte values"""
-        # Check for problematic bytes at 1024-byte boundaries
-        invalid_bytes = {b'\x00'[0], b'\x7c'[0]}
-
-        for i in range(1016, len(data), 1024):
-            if i < len(data) and data[i] in invalid_bytes:
-                # Need to regenerate with larger padding
-                logger.debug(f"Protocol bug detected at offset {i}, regenerating ZIP")
-                # For now, just log it - the dummy.txt padding should handle most cases
-                pass
-
-        return data
-
-    def _send_file(self, data: bytes):
-        """Send file data in chunks"""
+    def _send_file(
+        self,
+        data: bytes,
+        command: CommandProtocol = CommandProtocol.OUT_SET_BUTTONS
+    ):
+        """Send file data in chunks."""
         chunk_size = 1024
         file_size = len(data)
 
         # First chunk with header (1016 bytes of data)
         first_chunk = data[:chunk_size - 8]
-        packet = self._build_packet(CommandProtocol.OUT_SET_BUTTONS, first_chunk.ljust(chunk_size - 8, b'\x00'), file_size)
+        packet = self._build_packet(
+            command,
+            first_chunk.ljust(chunk_size - 8, b'\x00'),
+            file_size
+        )
         packets = [packet]
 
         # Remaining chunks (raw, no header)
@@ -269,14 +328,22 @@ class UlanziDevice:
 
         # Write all packets at once
         for packet in packets:
-            self.device.write(packet)
+            self._write_report(packet)
 
         logger.debug(f"Sent {file_size} bytes in {len(packets)} chunks")
 
     def _send_command(self, command: CommandProtocol, payload: bytes):
         """Send command to device"""
         packet = self._build_packet(command, payload, len(payload))
-        self.device.write(packet)
+        self._write_report(packet)
+
+    def _write_report(self, packet: bytes):
+        # hidapi requires Report ID 0 for this unnumbered interface. The ID is
+        # stripped by the backend; all 1024 protocol bytes reach the USB device.
+        report = b'\x00' + packet
+        written = self.device.write(report)
+        if written != len(report):
+            raise OSError(f"D200 HID write failed: {written}/{len(report)} bytes")
 
     def _build_packet(self, command: CommandProtocol, data: bytes, length: int) -> bytes:
         """Build USB packet"""

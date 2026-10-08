@@ -1,0 +1,12 @@
+[Unit]
+Description=Ulanzi D200 Configuration UI
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/ulanzi/venv/bin/ulanzi-web --host 127.0.0.1 --port 8765 --config %h/.config/ulanzi/config.yaml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

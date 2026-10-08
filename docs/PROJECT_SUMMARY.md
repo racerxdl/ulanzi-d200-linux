@@ -20,7 +20,7 @@ ulanzi/
 ├── icons/                       # Placeholder button icons (196×196 PNG)
 ├── setup.py                     # Package setup
 ├── requirements.txt             # Python dependencies
-├── config.yaml                  # Example configuration
+├── config.example.yaml          # Shipped example; copy to ignored config.yaml
 ├── README.md                    # Full documentation
 ├── QUICKSTART.md                # Quick start guide
 ├── INSTALL.md                   # Installation guide
@@ -74,10 +74,11 @@ ulanzi/
 ```
 0  1  2  3  4
 5  6  7  8  9
-10 11 12
+10 11 12 [13 wide display]
 ```
 
-13 buttons total, indexed 0-12.
+Buttons 0–12 are regular 196×196 faces. Slot 13 is the fixed 458×196
+wide display spanning the final two columns; it can show statistics or a GIF.
 
 ## Configuration Example
 
@@ -125,7 +126,7 @@ buttons:
 ## Installation
 
 ```bash
-cd /home/lucas/Works/VibeCodedProjects/ulanzi
+cd /path/to/ulanzi-d200-linux
 python3 -m venv venv
 source venv/bin/activate
 pip install -e .
@@ -152,12 +153,10 @@ ulanzi-daemon ~/.config/ulanzi/config.yaml
 
 ## Dependencies
 
-- **pyusb** - USB device communication
 - **hidapi** - HID protocol support
 - **pyyaml** - Configuration parsing
-- **obs-websocket-py** - OBS Studio control
+- **obsws-python** - OBS Studio control
 - **pillow** - Image processing
-- **python-daemon** - Daemon utilities
 
 ## Testing
 
@@ -198,13 +197,19 @@ tail -f ~/.local/share/ulanzi/daemon.log
 - 0x000a: OUT_SET_BRIGHTNESS (brightness control)
 - 0x000b: OUT_SET_LABEL_STYLE (text styling)
 - 0x0101: IN_BUTTON (button press event)
+- 0x010b: IN_CONFIGURATION_REQUEST (startup/font request or full-upload ACK)
+- 0x0003 / 0x0303: GETBASE request / synchronization reply
 
 ### Button Image Format
 - PNG format, 196×196 pixels
 - Sent as ZIP file containing:
-  - page/manifest.json (button configuration)
-  - page/icons/icon_*.png (button images)
-  - page/dummy.txt (padding for protocol bug workaround)
+  - manifest.json (button configuration)
+  - icons/*.png (button images)
+- Unnumbered hidapi output includes Report ID 0 before each 1024-byte USB
+  protocol packet. Standard ZIP bytes, including zero and `0x7c`, are preserved.
+- Full uploads consume their normal ACKs during synchronization. An unsolicited
+  configuration request during normal operation reloads the saved host layout
+  after an internal firmware UI restart.
 
 ## Future Enhancements
 
@@ -224,4 +229,4 @@ MIT
 
 - [Ulanzi D200 Protocol](https://github.com/redphx/strmdck)
 - [OBS WebSocket Protocol](https://github.com/obsproject/obs-websocket)
-- [PyUSB Documentation](https://pyusb.github.io/pyusb/)
+- [hidapi Documentation](https://github.com/libusb/hidapi)

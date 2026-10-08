@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Ulanzi D200 Configuration
+Name[pt_BR]=Ulanzi D200 — Configuração
+Comment=Edit buttons and switch saved layouts
+Comment[pt_BR]=Edite os botões e troque os layouts salvos
+Exec=xdg-open "http://127.0.0.1:8765/#layoutsTitle"
+TryExec=xdg-open
+Icon=ulanzi-d200
+Terminal=false
+StartupNotify=false
+Categories=Settings;HardwareSettings;
+Keywords=Ulanzi;D200;StreamDeck;layout;buttons;
+Keywords[pt_BR]=Ulanzi;D200;layout;botões;configuração;

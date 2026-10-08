@@ -364,6 +364,10 @@ def _toggle_streaming(self, params: Dict[str, Any]):
 ✓ All OBS features work identically
 
 ### Testing:
+Use your existing local `config.yaml`. If you do not have one yet, run
+`cp config.example.yaml config.yaml` from the repository root and customize the
+ignored copy before starting the daemon.
+
 ```bash
 # Verify installation
 cd /path/to/ulanzi

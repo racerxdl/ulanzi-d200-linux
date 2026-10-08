@@ -1,103 +1,105 @@
-#!/usr/bin/env python3
-"""Test script for icon generation functionality"""
+"""Consumer-visible icon rendering and unsupported-type rejection tests."""
 
-import sys
+import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-# Add project to path
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
+from PIL import Image, ImageChops
 
 from ulanzi_manager.icon_generator import IconGenerator, IconSpec
 
-def test_icon_generation():
-    """Test icon generation with various specs"""
 
-    test_dir = project_root / "test_icons"
-    test_dir.mkdir(exist_ok=True)
+class IconGenerationTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.cache_dir = Path(self.temporary_directory.name)
+        self.generator = IconGenerator(cache_dir=self.cache_dir)
 
-    generator = IconGenerator(cache_dir=test_dir)
+    def test_unsupported_types_are_rejected_without_cached_images(self):
+        for icon_type in ('emoji', 'icon', 'unknown'):
+            for from_dict in (False, True):
+                with self.subTest(icon_type=icon_type, from_dict=from_dict):
+                    spec = {'type': icon_type}
+                    with self.assertRaisesRegex(ValueError, icon_type):
+                        if from_dict:
+                            self.generator.generate_from_dict(spec)
+                        else:
+                            self.generator.generate(IconSpec(spec))
+        self.assertEqual(list(self.cache_dir.iterdir()), [])
 
-    # Test 1: Solid color
-    print("Test 1: Solid color icon...")
-    spec1 = IconSpec({
-        'type': 'solid',
-        'color': '#0066FF'
-    })
-    path1 = generator.generate(spec1, force=True)
-    print(f"  ✓ Generated: {path1}")
+    def test_unsupported_types_are_rejected_with_matching_cached_images(self):
+        for icon_type in ('emoji', 'icon', 'unknown'):
+            spec = IconSpec({'type': icon_type})
+            for button_index in (None, 7):
+                cache_path = self.cache_dir / (
+                    f'icon_{spec.get_hash()}.png' if button_index is None
+                    else f'button_icon_{button_index}.png'
+                )
+                Image.new('RGB', (9, 5), '#123456').save(cache_path)
+                cached_bytes = cache_path.read_bytes()
+                for from_dict in (False, True):
+                    with self.subTest(icon_type=icon_type, button_index=button_index,
+                                      from_dict=from_dict):
+                        with self.assertRaisesRegex(ValueError, icon_type):
+                            if from_dict:
+                                self.generator.generate_from_dict(
+                                    spec.spec_dict, button_index=button_index)
+                            else:
+                                self.generator.generate(spec, button_index=button_index)
+                        self.assertEqual(cache_path.read_bytes(), cached_bytes)
 
-    # Test 2: Text icon
-    print("Test 2: Text icon...")
-    spec2 = IconSpec({
-        'type': 'text',
-        'color': '#FF6600',
-        'text': 'REC',
-        'text_color': '#FFFFFF',
-        'font_size': 70
-    })
-    path2 = generator.generate(spec2, force=True)
-    print(f"  ✓ Generated: {path2}")
+    def test_solid_icon_has_requested_color_and_geometry(self):
+        path = self.generator.generate_from_dict({
+            'type': 'solid', 'color': '#0066FF', 'size': [37, 23],
+        })
+        with Image.open(path) as image:
+            self.assertEqual(image.format, 'PNG')
+            self.assertEqual(image.size, (37, 23))
+            self.assertEqual(image.getcolors(), [(37 * 23, (0, 102, 255))])
 
-    # Test 3: Gradient icon
-    print("Test 3: Gradient icon...")
-    spec3 = IconSpec({
-        'type': 'gradient',
-        'color': '#0066FF',
-        'text_color': '#FF6600'
-    })
-    path3 = generator.generate(spec3, force=True)
-    print(f"  ✓ Generated: {path3}")
+    def test_gradient_icon_has_vertical_color_transition(self):
+        path = self.generator.generate_from_dict({
+            'type': 'gradient', 'color': '#FF0000',
+            'text_color': '#0000FF', 'size': [19, 20],
+        })
+        with Image.open(path) as image:
+            self.assertEqual(image.size, (19, 20))
+            self.assertEqual(image.getpixel((0, 0)), (255, 0, 0))
+            middle = image.getpixel((0, 10))
+            self.assertTrue(120 <= middle[0] <= 135)
+            self.assertEqual(middle[1], 0)
+            self.assertTrue(120 <= middle[2] <= 135)
+            bottom = image.getpixel((0, 19))
+            self.assertLess(bottom[0], 20)
+            self.assertEqual(bottom[1], 0)
+            self.assertGreater(bottom[2], 235)
+            for y in range(image.height):
+                self.assertEqual(image.getpixel((0, y)),
+                                 image.getpixel((image.width - 1, y)))
 
-    # Test 4: Test caching (should use cached version)
-    print("Test 4: Testing cache...")
-    path2_cached = generator.generate(spec2)
-    assert path2 == path2_cached, "Cache not working correctly"
-    print(f"  ✓ Cache working correctly: {path2_cached}")
+    def test_text_icons_show_centered_foreground_on_requested_background(self):
+        for text in ('REC', 'REC\nNOW'):
+            with self.subTest(text=text):
+                path = self.generator.generate_from_dict({
+                    'type': 'text', 'color': '#102030', 'text': text,
+                    'text_color': '#FFFFFF', 'font_size': 30, 'size': [180, 120],
+                })
+                with Image.open(path) as image:
+                    self.assertEqual(image.size, (180, 120))
+                    self.assertEqual(image.getpixel((0, 0)), (16, 32, 48))
+                    background = Image.new('RGB', image.size, '#102030')
+                    bounds = ImageChops.difference(image, background).getbbox()
+                    self.assertIsNotNone(bounds)
+                    left, top, right, bottom = bounds
+                    self.assertGreater(left, 0)
+                    self.assertGreater(top, 0)
+                    self.assertLess(right, image.width)
+                    self.assertLess(bottom, image.height)
+                    self.assertAlmostEqual((left + right) / 2, image.width / 2, delta=12)
+                    self.assertAlmostEqual((top + bottom) / 2, image.height / 2, delta=12)
+                    self.assertIn((255, 255, 255), image.getdata())
 
-    print("\n✅ All tests passed!")
-    return True
-
-def test_config_parsing():
-    """Test configuration with icon specs"""
-    from ulanzi_manager.config import ConfigParser
-
-    print("\nTesting config parsing with icon specs...")
-
-    config_path = project_root / "config.example-autogen.yaml"
-    if not config_path.exists():
-        print(f"  ⚠ Config file not found: {config_path}")
-        return False
-
-    try:
-        config = ConfigParser.load(str(config_path))
-        print(f"  ✓ Loaded config with {len(config.buttons)} buttons")
-
-        # Check if icons were generated
-        for button in config.buttons:
-            if button.icon_spec and button.image:
-                print(f"  ✓ Button {button.index}: Generated icon at {button.image}")
-
-        # Validate config
-        errors = ConfigParser.validate(config)
-        if errors:
-            print(f"  ⚠ Validation errors: {errors}")
-            return False
-
-        print("  ✓ Config validation passed")
-        return True
-
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
 
 if __name__ == '__main__':
-    try:
-        test_icon_generation()
-        test_config_parsing()
-    except ImportError as e:
-        print(f"Error: {e}")
-        print("Make sure Pillow (PIL) is installed: pip install pillow")
-        sys.exit(1)
+    unittest.main()
