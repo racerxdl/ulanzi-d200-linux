@@ -4,6 +4,13 @@ Commands below use your local `config.yaml` in the repository root. For a new
 configuration, run `cp config.example.yaml config.yaml` before editing; the local
 copy is ignored by Git. Existing configurations do not need to be copied again.
 
+The daemon and web UI automatically provision a missing configuration and its
+parent directories on first launch. This fallback has 13 unconfigured buttons
+and an action-free statistics display on button 14; it needs no external icons.
+Existing configuration files are never replaced by first-run provisioning.
+Explicit `ulanzi-manager validate` still reports a missing file rather than
+creating one, so a mistyped validation path cannot silently create a profile.
+
 ## Debug Mode - Identify Button Presses
 
 The easiest way to figure out which physical button corresponds to which index is to use debug mode.

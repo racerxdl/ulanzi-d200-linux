@@ -51,6 +51,39 @@ class WebAppTest(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_first_run_http_config_can_be_read_and_saved_without_icons(self):
+        from ulanzi_manager.config import ConfigParser
+
+        path = self.root / "new" / "profile" / "config.yaml"
+        self.app = WebApp(path)
+        with self._http_server() as server:
+            status, config = self._http_request(server, "GET", "/api/config")
+            self.assertEqual(200, status)
+            self.assertEqual(14, len(config["buttons"]))
+            self.assertFalse(any(button["enabled"] for button in config["buttons"][:13]))
+            self.assertEqual("stats", config["buttons"][13]["display_mode"])
+            self.assertFalse(any(
+                button["enabled"] and button["action_enabled"] for button in config["buttons"]
+            ))
+            config["brightness"] = 62
+            status, saved = self._http_request(server, "PUT", "/api/config", config)
+            self.assertEqual(200, status)
+            self.assertEqual(62, saved["brightness"])
+        loaded = ConfigParser.load(str(path))
+        self.assertEqual([], ConfigParser.validate(loaded))
+        self.assertEqual(62, loaded.brightness)
+
+    def test_web_start_preserves_existing_config_comments_and_values(self):
+        original = b"# Keep this comment\n" + self.config_path.read_bytes()
+        self.config_path.write_bytes(original)
+        self.app = WebApp(self.config_path)
+        with self._http_server() as server:
+            status, config = self._http_request(server, "GET", "/api/config")
+            self.assertEqual(200, status)
+            self.assertEqual(80, config["brightness"])
+            self.assertEqual("Teste", config["buttons"][0]["label"])
+        self.assertEqual(original, self.config_path.read_bytes())
+
     @contextmanager
     def _http_server(self, host="127.0.0.1", server_type=ThreadingHTTPServer):
         try:

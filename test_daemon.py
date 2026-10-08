@@ -87,6 +87,49 @@ class StatsDisplay(FakeDevice):
 
 
 class UlanziDaemonTest(unittest.TestCase):
+    def test_first_run_provisions_and_renders_without_missing_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "new" / "config.yaml"
+            daemon = UlanziDaemon(str(path))
+            device = StatsDisplay()
+            device.clock = FakeClock(daemon)
+            try:
+                with (
+                    patch("ulanzi_manager.daemon.UlanziDevice", return_value=device),
+                    patch.object(daemon.metrics, "sample", return_value={"cpu": 25, "mem": 50, "gpu": 0}),
+                ):
+                    self.assertTrue(daemon.start())
+                self.assertTrue(path.is_file())
+                self.assertEqual([13], [button.index for button in daemon.config.buttons])
+                self.assertTrue(all(not button.action_enabled for button in daemon.config.buttons))
+                self.assertEqual((458, 196), device.frame.size)
+            finally:
+                daemon.stop()
+
+    def test_start_preserves_existing_configuration_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            original = (
+                "# Keep my formatting and comments\nbrightness: 37\nbuttons:\n"
+                + "  - null\n" * 13
+                + "  - display_mode: stats\n    action_enabled: false\n"
+            ).encode()
+            path.write_bytes(original)
+            daemon = UlanziDaemon(str(path))
+            device = StatsDisplay()
+            device.clock = FakeClock(daemon)
+            try:
+                with (
+                    patch("ulanzi_manager.daemon.UlanziDevice", return_value=device),
+                    patch.object(daemon.metrics, "sample", return_value={"cpu": 25, "mem": 50, "gpu": 0}),
+                ):
+                    self.assertTrue(daemon.start())
+                self.assertEqual(original, path.read_bytes())
+                self.assertEqual(37, daemon.config.brightness)
+                self.assertEqual((458, 196), device.frame.size)
+            finally:
+                daemon.stop()
+
     def _started_daemon(self):
         daemon = UlanziDaemon("unused.yaml")
         device = FakeDevice()
@@ -135,7 +178,9 @@ class UlanziDaemonTest(unittest.TestCase):
         self.assertEqual([{"mode": 2}] * 3, device.small_window_updates)
 
     def _stats_daemon(self):
-        daemon = UlanziDaemon("unused.yaml")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        daemon = UlanziDaemon(str(Path(directory.name) / "config.yaml"))
         clock = FakeClock(daemon, stop_at=3.7)
         device = StatsDisplay()
         device.clock = clock
