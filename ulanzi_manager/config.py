@@ -3,6 +3,8 @@
 import yaml
 import re
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
@@ -129,6 +131,45 @@ class Config:
 
 class ConfigParser:
     """Parse YAML configuration files"""
+
+    @staticmethod
+    def ensure_default(config_path: str) -> None:
+        """Publish a self-contained first-run profile without replacing user data."""
+        config_file = Path(config_path)
+        if config_file.exists() or config_file.is_symlink():
+            return
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        document = {
+            'brightness': 100,
+            'label_style': {
+                'Align': 'bottom', 'Color': 0xFFFFFF, 'FontName': 'Roboto',
+                'ShowTitle': True, 'Size': 10, 'Weight': 80,
+            },
+            'obs': {'host': 'localhost', 'port': 4444, 'password': None},
+            'buttons': [None] * 13 + [{
+                'display_mode': 'stats', 'action_enabled': False,
+            }],
+        }
+        candidate = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                'w', encoding='utf-8', dir=config_file.parent,
+                prefix='.config-default-', suffix='.yaml', delete=False,
+            ) as handle:
+                candidate = Path(handle.name)
+                yaml.safe_dump(document, handle, sort_keys=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                # Link only after the complete file is durable. A competing
+                # startup or user save wins without exposing a partial profile.
+                os.link(candidate, config_file)
+            except FileExistsError:
+                pass
+        finally:
+            if candidate is not None:
+                candidate.unlink()
 
     @staticmethod
     def load(config_path: str) -> Config:

@@ -46,6 +46,13 @@ Requires Python 3.9 or newer.
    ulanzi-daemon ~/.config/ulanzi/config.yaml
    ```
 
+When the daemon or web UI starts with a missing configuration file, it creates
+the parent directories and a self-contained default profile automatically:
+13 unconfigured app buttons and live statistics on the wide display, with no
+button actions enabled. No external icons or application commands are required.
+The complete file is published atomically without replacing an existing
+configuration, including one created by another startup process.
+
 ## Web UI
 
 Start the local configuration interface:

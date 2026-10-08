@@ -94,6 +94,7 @@ class UlanziDaemon:
 
         try:
             # Load configuration
+            ConfigParser.ensure_default(self.config_path)
             self.config = ConfigParser.load(self.config_path)
 
             # Validate configuration

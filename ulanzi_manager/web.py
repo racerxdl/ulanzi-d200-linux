@@ -81,6 +81,7 @@ class ValidationError(ValueError):
 class WebApp:
     def __init__(self, config_path: Path):
         self.config_path = config_path.expanduser().resolve()
+        ConfigParser.ensure_default(str(self.config_path))
         self.config_dir = self.config_path.parent
         self.icons_dir = self.config_dir / "icons"
         self.layouts_dir = self.config_dir / "layouts"
