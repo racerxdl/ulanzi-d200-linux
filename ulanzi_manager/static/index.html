@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ulanzi D200</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">CONTROLADOR LOCAL</p>
+      <h1>Ulanzi D200</h1>
+    </div>
+    <div class="header-actions">
+      <div class="status-group" aria-live="polite">
+        <span id="deviceStatus" class="status"><i></i>Verificando dispositivo</span>
+        <span id="serviceStatus" class="status"><i></i>Verificando serviço</span>
+      </div>
+      <button id="saveButton" class="button primary" type="button">Salvar e aplicar</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel settings-panel" aria-labelledby="generalTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">DISPOSITIVO</p>
+          <h2 id="generalTitle">Ajustes gerais</h2>
+        </div>
+        <span id="saveState" class="save-state">Configuração carregada</span>
+      </div>
+
+      <div class="settings-grid">
+        <label class="field brightness-field">
+          <span>Brilho <output id="brightnessValue">100%</output></span>
+          <input id="brightness" type="range" min="0" max="100" step="1">
+        </label>
+        <label class="field">
+          <span>Posição do rótulo</span>
+          <select id="labelAlign">
+            <option value="top">Superior</option>
+            <option value="center">Centro</option>
+            <option value="bottom">Inferior</option>
+          </select>
+        </label>
+        <label class="field compact-field">
+          <span>Tamanho do texto</span>
+          <input id="labelSize" type="number" min="6" max="40">
+        </label>
+        <label class="toggle-field">
+          <input id="showTitles" type="checkbox">
+          <span class="toggle"></span>
+          Exibir rótulos
+        </label>
+      </div>
+
+      <details class="obs-settings">
+        <summary>Conexão com OBS Studio</summary>
+        <div class="settings-grid obs-grid">
+          <label class="field"><span>Servidor</span><input id="obsHost" type="text" autocomplete="off"></label>
+          <label class="field compact-field"><span>Porta</span><input id="obsPort" type="number" min="1" max="65535"></label>
+          <label class="field"><span>Senha</span><input id="obsPassword" type="password" autocomplete="new-password" placeholder="Sem senha"></label>
+        </div>
+      </details>
+    </section>
+
+    <section class="panel layouts-panel" aria-labelledby="layoutsTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">PREDEFINIÇÕES</p>
+          <h2 id="layoutsTitle">Layouts salvos</h2>
+        </div>
+        <p class="hint">Salve versões e restaure sem perder o layout atual</p>
+      </div>
+      <div class="layout-controls">
+        <label class="field layout-name-field">
+          <span>Nome do layout</span>
+          <input id="layoutName" type="text" maxlength="60" autocomplete="off" placeholder="Ex.: Trabalho">
+        </label>
+        <button id="saveLayoutButton" class="button secondary" type="button">Salvar layout</button>
+        <div class="layout-actions">
+          <button id="loadLayoutButton" class="button secondary" type="button">Carregar</button>
+          <button id="deleteLayoutButton" class="button danger" type="button">Excluir</button>
+        </div>
+      </div>
+      <p class="layout-note">Escolha um layout pela imagem abaixo. Carregar abre o layout no editor; “Salvar e aplicar” envia ao D200.</p>
+      <div id="savedLayouts" class="layout-gallery" role="group" aria-label="Layouts salvos"></div>
+    </section>
+
+    <section class="workspace">
+      <div class="panel deck-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">LAYOUT</p>
+            <h2>Botões</h2>
+          </div>
+          <div class="deck-heading-actions">
+            <p class="hint">Arraste para reorganizar ou selecione para editar</p>
+            <label class="button secondary upload-button mosaic-upload">
+              <span>Escolher imagem de fundo</span>
+              <input id="mosaicUpload" type="file" accept="image/png,image/jpeg,image/webp">
+            </label>
+            <small>Edite a imagem antes de dividi-la entre os botões. A tela larga é opcional.</small>
+          </div>
+        </div>
+        <div class="background-workspace">
+          <div class="background-overview-panel">
+            <div class="preview-heading">
+              <span>Fundo atual</span>
+              <strong>Prévia completa</strong>
+            </div>
+            <div id="backgroundOverview" class="background-overview" aria-label="Prévia do fundo atual"></div>
+          </div>
+          <div id="mosaicEditor" class="mosaic-editor" hidden>
+            <div class="mosaic-preview-frame" aria-label="Prévia da nova imagem de fundo">
+              <img id="mosaicPreviewImage" alt="">
+              <span id="mosaicPreviewShade"></span>
+            </div>
+            <div class="mosaic-controls">
+              <label class="field">
+                <span>Tamanho do fundo <output id="mosaicScaleValue">100%</output></span>
+                <input id="mosaicScale" type="range" min="100" max="200" step="5" value="100">
+              </label>
+              <label class="field">
+                <span>Escurecer fundo <output id="mosaicDarknessValue">0%</output></span>
+                <input id="mosaicDarkness" type="range" min="0" max="80" step="5" value="0">
+              </label>
+              <label class="toggle-field">
+                <input id="mosaicIncludeWide" type="checkbox">
+                <span class="toggle"></span>
+                Incluir tela larga no fundo
+              </label>
+              <button id="applyMosaicButton" class="button primary" type="button">Aplicar fundo nos botões</button>
+            </div>
+          </div>
+        </div>
+        <div id="buttonGrid" class="button-grid" aria-label="Botões do Ulanzi D200"></div>
+      </div>
+
+      <aside class="panel editor-panel" aria-labelledby="editorTitle">
+        <div class="section-heading editor-heading">
+          <div>
+            <p class="eyebrow">EDIÇÃO</p>
+            <h2 id="editorTitle">Botão 1</h2>
+          </div>
+          <label class="switch-label">
+            <input id="buttonEnabled" type="checkbox">
+            <span class="toggle"></span>
+            Ativo
+          </label>
+        </div>
+
+        <div id="editorBody" class="editor-body">
+          <label class="field">
+            <span>Posição no layout</span>
+            <select id="buttonPosition" aria-label="Posição no layout"></select>
+          </label>
+
+          <label id="wideDisplayModeField" class="field" hidden>
+            <span>Conteúdo da tela larga</span>
+            <select id="wideDisplayMode">
+              <option value="stats">CPU, RAM e GPU</option>
+              <option value="gif">GIF animado</option>
+              <option value="background">Imagem de fundo</option>
+            </select>
+          </label>
+          <div id="metricsControls" class="metrics-controls" hidden>
+            <label class="field">
+              <span>Visualização das métricas</span>
+              <select id="metricsView">
+                <option value="text">Valores em texto</option>
+                <option value="htop">Barras · estilo htop</option>
+                <option value="history">Linhas contínuas · último minuto</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Layout das métricas</span>
+              <select id="metricsLayout">
+                <option value="columns">Colunas · valores sobre os rótulos</option>
+                <option value="rows">Linhas · rótulos à esquerda</option>
+                <option value="compact">Compacto · rótulos sobre os valores</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Tamanho do texto <output id="metricsSizeValue">30 px</output></span>
+              <input id="metricsSize" type="range" min="18" max="48" step="1" value="30">
+            </label>
+            <div class="metrics-fonts">
+              <label class="field">
+                <span>Fonte</span>
+                <select id="metricsFontFamily">
+                  <option value="sans">Sem serifa</option>
+                  <option value="mono">Monoespaçada</option>
+                  <option value="serif">Serifada</option>
+                  <option value="ubuntu">Ubuntu</option>
+                  <option value="ubuntu-mono">Ubuntu Mono</option>
+                  <option value="noto-sans">Noto Sans</option>
+                  <option value="noto-serif">Noto Serif</option>
+                  <option value="liberation-sans">Liberation Sans</option>
+                  <option value="liberation-serif">Liberation Serif</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Estilo da fonte</span>
+                <select id="metricsFontStyle">
+                  <option value="normal">Normal</option>
+                  <option value="bold">Negrito</option>
+                  <option value="italic">Itálico</option>
+                  <option value="bold-italic">Negrito itálico</option>
+                </select>
+              </label>
+            </div>
+            <div class="metrics-colors">
+              <div class="metrics-palette">
+                <strong>CPU</strong>
+                <label class="field">
+                  <span>Valor</span>
+                  <input id="metricsCpuColor" type="color" value="#ffffff" aria-label="Cor do valor de CPU">
+                </label>
+                <label class="field">
+                  <span>Rótulo</span>
+                  <input id="metricsCpuLabelColor" type="color" value="#ffffff" aria-label="Cor do rótulo de CPU">
+                </label>
+                <label class="field metrics-line-color" hidden>
+                  <span>Linha</span>
+                  <input id="metricsCpuLineColor" type="color" value="#ff6b35" aria-label="Cor da linha de CPU">
+                </label>
+              </div>
+              <div class="metrics-palette">
+                <strong>RAM</strong>
+                <label class="field">
+                  <span>Valor</span>
+                  <input id="metricsMemColor" type="color" value="#ffffff" aria-label="Cor do valor de RAM">
+                </label>
+                <label class="field">
+                  <span>Rótulo</span>
+                  <input id="metricsMemLabelColor" type="color" value="#ffffff" aria-label="Cor do rótulo de RAM">
+                </label>
+                <label class="field metrics-line-color" hidden>
+                  <span>Linha</span>
+                  <input id="metricsMemLineColor" type="color" value="#52c97a" aria-label="Cor da linha de RAM">
+                </label>
+              </div>
+              <div class="metrics-palette">
+                <strong>GPU</strong>
+                <label class="field">
+                  <span>Valor</span>
+                  <input id="metricsGpuColor" type="color" value="#ffffff" aria-label="Cor do valor de GPU">
+                </label>
+                <label class="field">
+                  <span>Rótulo</span>
+                  <input id="metricsGpuLabelColor" type="color" value="#ffffff" aria-label="Cor do rótulo de GPU">
+                </label>
+                <label class="field metrics-line-color" hidden>
+                  <span>Linha</span>
+                  <input id="metricsGpuLineColor" type="color" value="#00ccff" aria-label="Cor da linha de GPU">
+                </label>
+              </div>
+            </div>
+            <div id="metricsStylePreview" class="metrics-style-preview"></div>
+            <small>Prévia com valores de exemplo. No dispositivo, atualização a cada 1,5 segundo.</small>
+          </div>
+
+
+          <div id="iconRow" class="icon-row">
+            <div id="iconPreview" class="icon-preview"><span>Sem ícone</span></div>
+            <div class="icon-controls">
+              <label class="field">
+                <span>Ícone</span>
+                <select id="buttonIcon"></select>
+              </label>
+              <label class="button secondary upload-button">
+                <span id="uploadText">Enviar imagem</span>
+                <input id="iconUpload" type="file" accept="image/png,image/jpeg,image/webp">
+              </label>
+              <small id="iconHelp">PNG, JPG ou WebP. Ajustado para 196 × 196.</small>
+            </div>
+          </div>
+
+          <label class="field logo-size-field">
+            <span>Tamanho do logo <output id="logoScaleValue">100%</output></span>
+            <input id="logoScale" type="range" min="25" max="100" step="5" value="100">
+          </label>
+          <label id="wideActionToggle" class="toggle-field" hidden>
+            <input id="wideActionEnabled" type="checkbox">
+            <span class="toggle"></span>
+            Usar também como botão
+          </label>
+
+
+          <label id="buttonLabelField" class="field">
+            <span>Rótulo</span>
+            <input id="buttonLabel" type="text" maxlength="40" placeholder="Nome exibido no botão">
+          </label>
+
+          <label id="buttonActionField" class="field">
+            <span>Ação</span>
+            <select id="buttonAction">
+              <option value="app">Abrir aplicativo</option>
+              <option value="command">Executar comando</option>
+              <option value="key">Atalho de teclado</option>
+              <option value="obs">OBS Studio</option>
+            </select>
+          </label>
+
+          <div id="actionFields" class="action-fields"></div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

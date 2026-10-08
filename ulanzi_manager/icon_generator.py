@@ -21,11 +21,11 @@ class IconSpec:
         Initialize IconSpec from a dictionary
 
         Expected keys:
-        - type: 'solid', 'gradient', 'text', 'emoji', 'icon' (required)
+        - type: 'solid', 'gradient', 'text' (default: 'solid')
         - color: background color as hex string '#RRGGBB' or name
         - text: text to display (for type='text')
         - text_color: color of text as hex string or name (default: white)
-        - font_size: font size (default: 60)
+        - font_size: font size (default: 40)
         - font: font name or path (default: system default)
         - size: tuple (width, height) or single int (default: 196x196)
         """
@@ -53,7 +53,7 @@ class IconSpec:
         """Validate the icon spec and return list of errors"""
         errors = []
 
-        valid_types = ['solid', 'gradient', 'text', 'emoji', 'icon']
+        valid_types = ['solid', 'gradient', 'text']
         if self.type not in valid_types:
             errors.append(f"Invalid icon type '{self.type}'. Must be one of: {', '.join(valid_types)}")
 
@@ -112,6 +112,9 @@ class IconGenerator:
         Returns:
             Path to generated icon file
         """
+        if spec.type not in ('solid', 'text', 'gradient'):
+            raise ValueError(f"Unsupported icon type: {spec.type}")
+
         if button_index is not None:
             cache_path = self.cache_dir / f"button_icon_{button_index}.png"
         else:
@@ -129,10 +132,8 @@ class IconGenerator:
             img = self._generate_solid(spec)
         elif spec.type == 'text':
             img = self._generate_text(spec)
-        elif spec.type == 'gradient':
-            img = self._generate_gradient(spec)
         else:
-            raise ValueError(f"Unsupported icon type: {spec.type}")
+            img = self._generate_gradient(spec)
 
         # Save and return
         img.save(cache_path, 'PNG')

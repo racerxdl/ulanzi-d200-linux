@@ -1,5 +1,5 @@
 # Ulanzi D200 Configuration Example
-# This file demonstrates all available features
+# Copy this shipped example to ignored config.yaml before customizing it.
 
 # Global settings
 brightness: 100

@@ -34,8 +34,9 @@ Button layout:
 
 ### 2. Update Configuration
 
-Edit `config.yaml`:
+From the repository root, copy the shipped example to ignored `config.yaml`, then edit your local copy:
 ```bash
+cp config.example.yaml config.yaml
 nano config.yaml
 ```
 

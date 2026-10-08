@@ -5,7 +5,7 @@ Get your Ulanzi D200 up and running in 5 minutes!
 ## 1. Install
 
 ```bash
-cd /home/lucas/Works/VibeCodedProjects/ulanzi
+cd /path/to/ulanzi-d200-linux
 python3 -m venv venv
 source venv/bin/activate
 pip install -e .
@@ -176,6 +176,6 @@ sudo apt install xdotool
 
 ## Next Steps
 
-- Read [README.md](README.md) for detailed documentation
-- Check [config.yaml](config.yaml) for more examples
+- Read [README.md](../README.md) for detailed documentation
+- Check [config.example.yaml](../config.example.yaml) for more examples
 - See [INSTALL.md](INSTALL.md) for advanced setup

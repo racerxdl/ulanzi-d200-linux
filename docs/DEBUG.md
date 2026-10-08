@@ -1,5 +1,9 @@
 # Debug Guide - Ulanzi D200 Manager
 
+Commands below use your local `config.yaml` in the repository root. For a new
+configuration, run `cp config.example.yaml config.yaml` before editing; the local
+copy is ignored by Git. Existing configurations do not need to be copied again.
+
 ## Debug Mode - Identify Button Presses
 
 The easiest way to figure out which physical button corresponds to which index is to use debug mode.
@@ -72,7 +76,7 @@ buttons:
 Or use absolute paths:
 ```yaml
 buttons:
-  - image: /home/lucas/Works/VibeCodedProjects/ulanzi/icons/firefox.png
+  - image: /absolute/path/to/ulanzi-d200-linux/icons/firefox.png
     label: Firefox
     action: app
     params:
@@ -127,11 +131,56 @@ DEBUG:ulanzi_manager.device:Added image for button 0: ./icons/firefox.png
 
 ## Common Issues
 
-### Issue: "No config for button 13"
+### Issue: The default layout returns after a firmware crash or power cycle
 
-**Cause**: You pressed button 12 (the last button), but there's no button 13.
+**Cause**: The layout in `config.yaml` is host-managed. A firmware UI crash can
+reset the visible buttons without disconnecting USB; reconnect detection alone
+does not catch it. Separately, omitting hidapi's required Report ID 0 can truncate
+ZIP continuation chunks. The old padding workaround could then exhaust its
+retry search, preventing the daemon from restoring the saved layout.
 
-**Solution**: The device only has 13 buttons (0-12). Use debug mode to identify which button you pressed.
+**Solution**: Unsolicited firmware configuration/font requests (`0x010b`) now
+reopen the HID session and reapply the current `~/.config/ulanzi/config.yaml`,
+including app buttons and the wide display. The full-upload synchronization
+consumes normal ZIP acknowledgements so they do not cause recovery loops.
+Heartbeat/info packets are not treated as crashes. Correct HID report framing
+preserves all ZIP bytes without padding retries.
+
+HID transport failures still terminate the stale daemon. The enabled systemd
+user service reconnects to a power-cycled or newly connected USB device.
+Stale button reports are discarded before actions are enabled. Recovery does
+not overwrite the active configuration or named presets.
+
+Check the recovery service with:
+
+```bash
+systemctl --user is-enabled ulanzi-daemon.service
+systemctl --user status ulanzi-daemon.service
+```
+
+The service should be `enabled` and `active` while the D200 is connected.
+
+### Issue: Device flickers, freezes, or repeatedly asks to reconnect
+
+**Causes**:
+- Incorrect HID report framing could truncate ZIP data and make the former
+  padding search consume a CPU core before startup failed.
+- Rebuilding and recompressing the same partial frame archive on every GIF
+  cycle wastes CPU and can make frame delivery uneven.
+- An overly frequent firmware heartbeat causes unnecessary redraws.
+
+**Solution**: Each hidapi write includes Report ID 0 followed by the complete
+1024-byte protocol packet; failed or short writes are reported as errors. The
+initial layout selects the wide-display mode, then sends its first decoded PNG
+frame after the full import finishes. The complete GIF is never sent as an
+image in the startup archive. Prepared frame archives are cached and reused on
+subsequent animation cycles. Button polling remains at 50 ms, while the
+firmware heartbeat runs once per second. A failed HID transfer reaches systemd
+so the service can restart after USB reconnection.
+
+After startup, confirm the daemon logged `Daemon started successfully`. CPU
+and memory should remain stable instead of continuously increasing.
+
 
 ### Issue: Images not showing but no errors
 
@@ -156,6 +205,22 @@ DEBUG:ulanzi_manager.device:Added image for button 0: ./icons/firefox.png
 1. Check config.yaml for missing image paths
 2. Verify all referenced images exist
 3. Use debug mode to identify which buttons need images
+
+### Issue: Statistics updates delay button presses or grow memory usage
+
+Statistics collection and image rendering run on a single worker. The main
+loop continues button polling and keepalive requests, and remains the only HID
+writer. Only one completed frame is retained for handoff. Reconfiguration and
+shutdown join the producer before replacing the image/history state; unexpected
+worker failures propagate to the supervisor rather than silently freezing the
+display.
+
+One-shot statistics frames are not stored in the archive cache. Reusable
+layout/GIF archives use an LRU capped at 16 MiB of compressed payloads and
+128 entries; an individual oversized archive is sent without retention.
+
+If statistics stop updating, inspect the user service journal for the original
+worker error and verify that the configured `Restart=on-failure` unit is active.
 
 ## Verbose Logging
 

@@ -20,6 +20,9 @@ buttons:
 
 That's it! The icon will be automatically generated and cached.
 
+Supported `type` values are `solid`, `text`, and `gradient` (default: `solid`).
+`emoji` and `icon` are not supported and are rejected even if a matching cached image exists.
+
 ## Common Patterns
 
 ### Recording Button (Red)

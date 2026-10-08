@@ -6,20 +6,21 @@ setup(
     description="Ulanzi D200 StreamDeck device manager for Linux",
     author="Lucas",
     packages=find_packages(),
+    include_package_data=True,
+    package_data={"ulanzi_manager": ["static/*.html", "static/*.css", "static/*.js",
+                                     "static/fonts/*.ttf", "static/fonts/LICENSE*"]},
     install_requires=[
-        "pyusb==1.2.1",
         "hidapi==0.14.0",
         "pyyaml==6.0.1",
-        "obs-websocket-py==0.5.3",
+        "obsws-python==1.8.0",
         "pillow==10.1.0",
-        "python-daemon==3.0.1",
-        "deepdiff==8.6.1",
     ],
     entry_points={
         "console_scripts": [
             "ulanzi-manager=ulanzi_manager.cli:main",
             "ulanzi-daemon=ulanzi_manager.daemon:main",
+            "ulanzi-web=ulanzi_manager.web:main",
         ],
     },
-    python_requires=">=3.8",
+    python_requires=">=3.9",
 )

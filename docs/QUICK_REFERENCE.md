@@ -18,6 +18,10 @@ Button layout:
 
 ## Common Commands
 
+For a new local configuration, run `cp config.example.yaml config.yaml` from the
+repository root before editing. `config.example.yaml` is shipped; your local
+`config.yaml` is ignored by Git.
+
 | Task | Command |
 |------|---------|
 | Identify buttons | `ulanzi-manager debug` |

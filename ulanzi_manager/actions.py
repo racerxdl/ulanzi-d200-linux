@@ -2,7 +2,8 @@
 
 import subprocess
 import logging
-from typing import Dict, Any, Optional
+from pathlib import Path
+from typing import Dict, Any
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
@@ -45,8 +46,17 @@ class AppAction(ActionHandler):
             return
 
         try:
-            subprocess.Popen([app_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logger.info(f"Launched application: {app_name}")
+            app_path = Path(app_name)
+            desktop = app_path.is_absolute() and app_path.suffix == '.desktop'
+            command = (
+                ['/usr/bin/python3', str(Path(__file__).with_name('desktop_launcher.py')), app_name]
+                if desktop else [app_name]
+            )
+            subprocess.Popen(
+                command, stdout=None if desktop else subprocess.DEVNULL,
+                stderr=None if desktop else subprocess.DEVNULL,
+            )
+            logger.info(f"Requested application launch: {app_name}")
         except Exception as e:
             logger.error(f"Failed to launch application: {e}")
 

@@ -16,7 +16,7 @@ A new feature has been added that allows users to automatically generate and cac
 - **No PIL knowledge required** - simple YAML configuration
 - **Three icon types**: solid colors, text-based, and gradients
 - **Automatic caching** - icons are generated only once per unique spec
-- **Full validation** - invalid specs are caught and reported
+- **Type validation** - unsupported icon types are rejected, even if a matching cached image exists
 - **Fallback fonts** - uses system fonts if custom fonts aren't available
 
 ## Module Structure
@@ -75,14 +75,14 @@ Main module for icon generation:
 ## Configuration Options
 
 All icon specs:
-- `type` (required): 'solid', 'text', or 'gradient'
+- `type`: 'solid', 'text', or 'gradient' (default: 'solid'); 'emoji' and 'icon' are not supported
 - `color`: Background or start color (hex: '#RRGGBB' or name: 'blue', 'red', etc.)
 - `size`: Icon dimensions (default: 196×196)
 
 Text type specific:
 - `text`: Text to display (required for text type)
 - `text_color`: Text color (default: white)
-- `font_size`: Font size 1-200 pixels (default: 60)
+- `font_size`: Font size 1-150 pixels (default: 40)
 - `font`: Path to TTF font file (optional)
 
 ## Files Modified
@@ -102,14 +102,18 @@ Text type specific:
 
 ## Testing
 
-Two test files are provided:
+The isolated unittest suite runs with:
+
+```bash
+python -m unittest test_icon_generation
+```
 
 1. **test_icon_generation.py**
-   - Tests icon generation for all types
-   - Tests caching mechanism
-   - Tests config parsing with icon specs
+   - Checks solid, text, and gradient pixel output and dimensions
+   - Checks unsupported-type rejection with and without cached images
+   - Uses temporary directories; does not create repository icons or load user configuration
 
-2. **examples_icon_usage.py**
+2. **examples_icon_usage.py** (usage examples, not a test suite)
    - Simple usage examples
    - Shows programmatic API usage
 
@@ -139,4 +143,5 @@ The system provides clear error messages:
 - Invalid icon specs are reported during config validation
 - Missing required fields (e.g., text for text type) are caught
 - Invalid color formats are detected
+- Unsupported types raise `ValueError` from both `generate()` and `generate_from_dict()` before cache lookup
 - Font issues fall back to system defaults gracefully

@@ -16,13 +16,17 @@ required_files = [
     'ulanzi_manager/actions.py',
     'ulanzi_manager/daemon.py',
     'ulanzi_manager/cli.py',
+    'ulanzi_manager/web.py',
+    'ulanzi_manager/static/index.html',
+    'ulanzi_manager/static/style.css',
+    'ulanzi_manager/static/app.js',
     'setup.py',
     'requirements.txt',
-    'config.yaml',
+    'config.example.yaml',
     'README.md',
-    'QUICKSTART.md',
-    'INSTALL.md',
-    'PROJECT_SUMMARY.md',
+    'docs/QUICKSTART.md',
+    'docs/INSTALL.md',
+    'docs/PROJECT_SUMMARY.md',
     'systemd/ulanzi-daemon.service',
 ]
 
@@ -69,7 +73,7 @@ except Exception as e:
 # Test configuration
 print("\n4. Testing configuration...")
 try:
-    config = ConfigParser.load('config.yaml')
+    config = ConfigParser.load('config.example.yaml')
     print(f"   ✓ Config loaded with {len(config.buttons)} buttons")
     
     errors = ConfigParser.validate(config)

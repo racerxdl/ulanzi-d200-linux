@@ -1,6 +1,7 @@
 .env
 .qwen/.env
 config.yaml
+config.yaml.backup
 # Python
 __pycache__/
 *.py[cod]
@@ -24,6 +25,7 @@ wheels/
 *.egg
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
@@ -50,3 +52,7 @@ Thumbs.db
 # Project specific
 test_config.yaml
 create_icons.py
+/layouts/
+/test_icons/
+/icons/button_icon_*.png
+/icons/icon_*.png
