@@ -7,6 +7,7 @@ import zipfile
 import json
 import logging
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Optional, Callable
 from dataclasses import dataclass
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 # USB IDs
 VENDOR_ID = 0x2207
 PRODUCT_ID = 0x0019
+
+# Retain reusable GIF/layout archives, never an unbounded stream of images.
+BUTTON_ARCHIVE_CACHE_BYTES = 16 * 1024 * 1024
+BUTTON_ARCHIVE_CACHE_ENTRIES = 128
 
 # Command protocols
 class CommandProtocol(IntEnum):
@@ -205,8 +210,10 @@ class UlanziDevice:
             time.sleep(0.01)
         raise TimeoutError("D200 firmware did not respond to synchronization")
 
-    def set_buttons(self, buttons: Dict[int, Dict], partial: bool = False) -> bool:
-        """Set or partially update button configuration with images."""
+    def set_buttons(
+        self, buttons: Dict[int, Dict], partial: bool = False, *, cache: bool = True
+    ) -> bool:
+        """Update buttons; disable archive reuse for one-off statistics frames."""
         manifest = {}
         icons = {}
 
@@ -260,18 +267,24 @@ class UlanziDevice:
         )
         logger.debug(f"Manifest: {json.dumps(manifest, indent=2)}")
 
-        cache_digest = hashlib.sha256()
-        cache_digest.update(b'partial' if partial else b'full')
-        cache_digest.update(manifest_data.encode('utf-8'))
-        for archive_path in sorted(icons):
-            cache_digest.update(archive_path.encode('utf-8'))
-            cache_digest.update(b'\0')
-            cache_digest.update(icons[archive_path])
-        cache_key = cache_digest.digest()
-        archive_cache = getattr(self, '_button_archive_cache', {})
-        cached_archive = archive_cache.get(cache_key)
+        cached_archive = None
+        if cache:
+            archive_cache = getattr(self, '_button_archive_cache', None)
+            if archive_cache is None:
+                archive_cache = self._button_archive_cache = OrderedDict()
+                self._button_archive_cache_bytes = 0
+            cache_digest = hashlib.sha256()
+            cache_digest.update(b'partial' if partial else b'full')
+            cache_digest.update(manifest_data.encode('utf-8'))
+            for archive_path in sorted(icons):
+                cache_digest.update(archive_path.encode('utf-8'))
+                cache_digest.update(b'\0')
+                cache_digest.update(icons[archive_path])
+            cache_key = cache_digest.digest()
+            cached_archive = archive_cache.get(cache_key)
 
         if cached_archive is not None:
+            archive_cache.move_to_end(cache_key)
             zip_data = cached_archive
         else:
             zip_buffer = io.BytesIO()
@@ -282,10 +295,15 @@ class UlanziDevice:
                 for archive_path, image_data in icons.items():
                     zf.writestr(archive_path, image_data)
             zip_data = zip_buffer.getvalue()
-            if len(archive_cache) >= 512:
-                archive_cache.clear()
-            archive_cache[cache_key] = zip_data
-            self._button_archive_cache = archive_cache
+            if cache and len(zip_data) <= BUTTON_ARCHIVE_CACHE_BYTES:
+                while archive_cache and (
+                    self._button_archive_cache_bytes + len(zip_data) > BUTTON_ARCHIVE_CACHE_BYTES
+                    or len(archive_cache) >= BUTTON_ARCHIVE_CACHE_ENTRIES
+                ):
+                    _, evicted = archive_cache.popitem(last=False)
+                    self._button_archive_cache_bytes -= len(evicted)
+                archive_cache[cache_key] = zip_data
+                self._button_archive_cache_bytes += len(zip_data)
 
         if partial:
             self._send_file(

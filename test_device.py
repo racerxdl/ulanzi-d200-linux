@@ -1,5 +1,6 @@
 import io
 import json
+import random
 import struct
 import tempfile
 import unittest
@@ -77,6 +78,94 @@ class DeferredFirmware:
 
 
 class UlanziDeviceTest(unittest.TestCase):
+    def test_archive_cache_bounds_compressed_bytes_for_variable_size_frames(self):
+        rng = random.Random(17)
+        sent = []
+        device = object.__new__(UlanziDevice)
+        device._send_file = lambda data, command=None: sent.append(data)
+        budget = 4096
+        evicted = False
+        with patch("ulanzi_manager.device.BUTTON_ARCHIVE_CACHE_BYTES", budget):
+            for index, size in enumerate((300, 800, 1200, 600, 1500, 300, 1000)):
+                payload = rng.randbytes(size)
+                device.set_buttons({
+                    13: {"image_data": payload, "image_name": f"frame-{index}.png"},
+                }, partial=True)
+                retained = list(device._button_archive_cache.values())
+                actual_bytes = sum(map(len, retained))
+                self.assertEqual(actual_bytes, device._button_archive_cache_bytes)
+                self.assertLessEqual(actual_bytes, budget)
+                evicted |= len(retained) < index + 1
+                with zipfile.ZipFile(io.BytesIO(sent[-1])) as archive:
+                    self.assertEqual(payload, archive.read(f"icons/frame-{index}.png"))
+        self.assertTrue(evicted)
+
+    def test_gif_cache_hits_touch_lru_and_eviction_preserves_recent_frames(self):
+        rng = random.Random(23)
+        sent = []
+        device = object.__new__(UlanziDevice)
+        device._send_file = lambda data, command=None: sent.append(data)
+        frames = [
+            {13: {"image_data": rng.randbytes(400), "image_name": f"frame-{index}.png"}}
+            for index in range(3)
+        ]
+        device.set_buttons(frames[0], partial=True)
+        archive_a = sent[-1]
+        device.set_buttons(frames[1], partial=True)
+        archive_b = sent[-1]
+        # The byte budget fits two archives, not three. No entry-count eviction.
+        with patch("ulanzi_manager.device.BUTTON_ARCHIVE_CACHE_BYTES", len(archive_a) + len(archive_b) + 32):
+            device.set_buttons(frames[0], partial=True)
+            self.assertIs(archive_a, sent[-1])
+            device.set_buttons(frames[2], partial=True)
+            self.assertIn(archive_a, device._button_archive_cache.values())
+            self.assertNotIn(archive_b, device._button_archive_cache.values())
+            device.set_buttons(frames[0], partial=True)
+            self.assertIs(archive_a, sent[-1])
+            device.set_buttons(frames[1], partial=True)
+            self.assertIsNot(archive_b, sent[-1])
+            with zipfile.ZipFile(io.BytesIO(sent[-1])) as archive:
+                self.assertEqual(frames[1][13]["image_data"], archive.read("icons/frame-1.png"))
+
+    def test_unique_statistics_archives_bypass_reusable_frame_cache(self):
+        sent = []
+        device = object.__new__(UlanziDevice)
+        device._send_file = lambda data, command=None: sent.append(data)
+        reusable = {13: {"image_data": b"gif-frame", "image_name": "gif-frame.png"}}
+        device.set_buttons(reusable, partial=True)
+        gif_archive = sent[-1]
+        retained = tuple(device._button_archive_cache.items())
+        retained_bytes = device._button_archive_cache_bytes
+        for percent in range(20):
+            output = io.BytesIO()
+            Image.new("RGB", (458, 196), (percent * 10, 100, 200)).save(output, format="PNG")
+            image_data = output.getvalue()
+            device.set_buttons({
+                13: {"image_data": image_data, "image_name": "stats-background.png"},
+            }, partial=True, cache=False)
+            self.assertEqual(retained, tuple(device._button_archive_cache.items()))
+            self.assertEqual(retained_bytes, device._button_archive_cache_bytes)
+            with zipfile.ZipFile(io.BytesIO(sent[-1])) as archive:
+                self.assertEqual(image_data, archive.read("icons/stats-background.png"))
+        device.set_buttons(reusable, partial=True)
+        self.assertIs(gif_archive, sent[-1])
+
+    def test_single_archive_larger_than_budget_is_not_retained(self):
+        sent = []
+        device = object.__new__(UlanziDevice)
+        device._send_file = lambda data, command=None: sent.append(data)
+        small = {13: {"image_data": b"gif-frame", "image_name": "small.png"}}
+        large = {13: {"image_data": random.Random(7).randbytes(4096), "image_name": "large.png"}}
+        with patch("ulanzi_manager.device.BUTTON_ARCHIVE_CACHE_BYTES", 2048):
+            device.set_buttons(small, partial=True)
+            archive = sent[-1]
+            device.set_buttons(large, partial=True)
+            self.assertGreater(len(sent[-1]), 2048)
+            self.assertEqual([archive], list(device._button_archive_cache.values()))
+            self.assertEqual(len(archive), device._button_archive_cache_bytes)
+            device.set_buttons(small, partial=True)
+            self.assertIs(archive, sent[-1])
+
     def test_archive_preserves_icon_contents(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

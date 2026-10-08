@@ -50,9 +50,19 @@ mkdir -p ~/.local/share/ulanzi
 
 ## Step 5: Generate Configuration
 
+Run from the project directory. Seed the referenced stock images without
+overwriting existing files, then generate the configuration:
+
 ```bash
+mkdir -p ~/.config/ulanzi/icons
+cp -n --no-dereference -- icons/*.png ~/.config/ulanzi/icons/
 ulanzi-manager generate-config ~/.config/ulanzi/config.yaml
 ```
+
+The full `bash install.sh` workflow performs this seeding before starting the
+web service, preserves existing configurations and icon symlinks, and installs
+both the web and daemon user units. It enables only the web unit automatically;
+daemon startup remains optional.
 
 ## Step 6: Edit Configuration
 

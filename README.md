@@ -56,6 +56,10 @@ ulanzi-web --config ~/.config/ulanzi/config.yaml
 
 Then open [http://127.0.0.1:8765](http://127.0.0.1:8765). The interface edits the 13 app buttons plus the fixed wide button 14, rearranges apps by drag and drop or by choosing a position, and previews saved layout presets before loading them. The background editor previews a selected static image, zooms it from 100% to 200%, darkens it from 0% to 80%, and splits the result into a 5×3 mosaic. Enable **Include wide display in background** to apply the final two cells of the image to button 14; leave it disabled to preserve the current GIF or statistics display. Existing app icons remain overlaid at their configured sizes, and button actions remain unchanged. The interface also configures brightness and OBS, validates the resulting YAML, and restarts `ulanzi-daemon` when **Save and apply** is selected. Saved layouts are stored under `~/.config/ulanzi/layouts/`; loading one opens it in the editor, and **Save and apply** makes it the active configuration used after device reconnects and power cycles.
 
+IPv6 loopback is also supported: run `ulanzi-web --host ::1` and open
+`http://[::1]:8765`. Requests accept only local IPv4, IPv6, or `localhost`
+authorities; malformed or nonlocal Host headers are rejected.
+
 Choose **Abrir aplicativo** in the button editor to search and select installed desktop applications. The list reads visible Linux `.desktop` entries from XDG application directories and Flatpak/Snap exports, using localized names and honoring user overrides. Selecting an app stores its stable launcher path in `params.name`; the daemon opens it with a native GTK/GIO helper, preserving launcher arguments, file placeholders, and packaging-specific commands. **Informar executável manualmente** retains the existing executable-name workflow. Labels and icons are not changed automatically. Reload the page to discover newly installed apps.
 
 The desktop helper waits for `launch_uris_async`/`launch_uris_finish` to complete before exiting, so a first press opens D-Bus-activated apps rather than merely starting their service. It uses the graphical launch context and does not retry or dispatch a second activation. Launch work runs in a separate process, keeping button polling and display updates responsive; activation failures reach the daemon journal. The helper uses `/usr/bin/python3` with system PyGObject, GDK 3, and GioUnix introspection (GLib 2.80+), not the virtualenv interpreter. On Ubuntu/Debian these bindings are supplied by `python3-gi`, `gir1.2-gtk-3.0`, and `gir1.2-glib-2.0`.
@@ -73,6 +77,11 @@ The full `bash install.sh` installation adds **Ulanzi D200 Configuration**
 menu and enables `ulanzi-web.service` for automatic startup. The shortcut opens
 the saved-layout gallery in the default browser at
 `http://127.0.0.1:8765/#layoutsTitle`; it uses `xdg-open` from `xdg-utils`.
+
+The installer seeds stock PNGs in `~/.config/ulanzi/icons` before starting the
+UI, without replacing existing files or symlinks. It installs both user service
+units; only the web service is enabled automatically. Enable the daemon as
+shown below when automatic device restoration is desired.
 
 The desktop icon uses the [official Ulanzi logo](https://www.ulanzi.com/cdn/shop/files/Ulanzi_logo.svg?v=1731031787)
 from the [Ulanzi website](https://www.ulanzi.com/), installed locally as
@@ -152,12 +161,26 @@ Missing, malformed, or negative synchronization replies fail startup instead of 
 ## Image Preparation
 
 App buttons use 196×196 PNG images in RGB/RGBA. Button 14 can display host CPU, RAM, and GPU utilization, refreshed with a 1.5-second target cadence, or an animated GIF. The Web UI fits GIFs to the native 458×196 wide display, preserves frame timing, and limits them to 300 frames and 8 MB. Enable **Usar também como botão** to assign an application, command, keyboard shortcut, or OBS action independently of the selected display mode.
+
+Uploads retain an 8 MiB decoded/prepared image limit; the bounded JSON request
+limit separately accommodates base64 expansion. Composite icons are keyed by
+both input images' contents, so replacing a source or background under the
+same filename takes effect on the next save/apply.
+
 Host CPU utilization is aggregated across all logical cores on a 0–100% scale, not a single core or a process's CPU column. `/proc/stat` guest counters are not added twice. RAM follows the htop 3.4 numeric used/total meter: `(MemTotal - MemFree - Buffers - Cached - SReclaimable + Shmem) / MemTotal`, rather than `MemTotal - MemAvailable`; see its [Linux accounting](https://github.com/htop-dev/htop/blob/3.4.1/linux/LinuxMachine.c) and [numeric memory meter](https://github.com/htop-dev/htop/blob/3.4.1/MemoryMeter.c). GPU utilization comes from Linux DRM `gpu_busy_percent`, or `nvidia-smi` when that sensor is absent. Device values are rounded to integer percentages. Collection and image updates use a separate 1.5-second timer, matching htop's configured `delay=15`; USB keepalive remains at 1 second, and GIF timing is unchanged. This aligns the target frequency, not the phase or the data snapshots of the two programs. Scheduler, processing, and USB latency can introduce small timing differences.
 In **CPU, RAM e GPU** mode, choose columns, rows, or a compact layout; adjust the value text from 18 to 48 px; and pick separate value and label colors for each of CPU, RAM, and GPU. Older layouts retain their previous common colors until you customize them individually. The preview uses example values, while the device shows live utilization. Settings persist with the active configuration and saved layout presets. Metrics are rendered over the static wide background, or black when no background is configured. Applying a background with the wide-display option enabled preserves the statistics mode.
 **Visualização das métricas** offers text, segmented utilization bars inspired by htop, or **Linhas contínuas · último minuto**: a single shared chart with three continuous lines and no area fill. Each metric has a separate **Linha** color selector, independent of its value and label colors; matching swatches below the values identify the lines. Existing layouts without line colors use orange for CPU, green for RAM, and cyan for GPU. Bars and charts retain the background, fonts, sizes, and per-metric colors. The chart uses a 0–100% vertical scale and a rolling 60-second time axis, with up to 41 real samples at the 1.5-second cadence; empty time is not fabricated. History starts fresh after restarting or applying a layout. The selected visualization and line colors persist with configurations and presets. Editor charts use example data; device charts collect host metrics at the configured cadence. Text-layout controls are shown only for text mode, and line-color controls only for history mode.
 The metrics font selectors offer nine families: DejaVu Sans, DejaVu Sans Mono, DejaVu Serif, Ubuntu, Ubuntu Mono, Noto Sans, Noto Serif, Liberation Sans, and Liberation Serif. Each supports normal, bold, italic, and bold-italic styles. Browser previews and device rendering use the same bundled font files without external downloads or host-font dependencies; Ubuntu variable fonts explicitly select regular or bold weights. Font selections apply to values and labels, persist with layouts, and preserve existing selections. Redistribution licenses are included in `ulanzi_manager/static/fonts/LICENSE*`.
 The wide-button editor places the GIF preview above its controls, without compositing the static background into GIF mode. Statistics preview text stays above the background; the desktop editor scrolls internally when its controls exceed the available height.
 
+Statistics collection and rendering run on one background worker, handing off
+only the latest complete frame to the polling loop. Only that loop writes HID;
+slow GPU queries do not block button reads or keepalive requests. Shutdown and
+configuration recovery join the worker before replacing rendering state.
+Reusable layout/GIF ZIP archives use a 16 MiB, 128-entry LRU; transient statistics
+frames bypass that cache.
+
+Custom switches show a visible outline when reached with keyboard navigation.
 
 **Auto-generate icons** (recommended):
 ```yaml

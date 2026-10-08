@@ -5,6 +5,7 @@ import io
 import time
 import logging
 import signal
+import threading
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -81,6 +82,11 @@ class UlanziDaemon:
         self.stats_background = None
         self.stats_history = deque(maxlen=int(60 / METRICS_INTERVAL_SECONDS) + 1)
         self.stats_next_update = None
+        self._stats_thread = None
+        self._stats_stop = threading.Event()
+        self._stats_requested = threading.Event()
+        self._stats_lock = threading.Lock()
+        self._stats_result = None
 
     def start(self):
         """Start the daemon"""
@@ -117,6 +123,7 @@ class UlanziDaemon:
             self.device.set_button_callback(self._on_button_press)
 
             self.running = True
+            self._start_stats_worker()
             logger.info("Daemon started successfully")
             return True
 
@@ -132,6 +139,7 @@ class UlanziDaemon:
     def stop(self):
         """Release resources. Safe to call more than once."""
         self.running = False
+        self._stop_stats_worker()
         device, self.device = self.device, None
         obs_client, self.obs_client = self.obs_client, None
 
@@ -186,10 +194,10 @@ class UlanziDaemon:
                     )
                     next_keepalive = now + KEEPALIVE_INTERVAL_SECONDS
 
-                if self.stats_background is not None and (
-                    self.stats_next_update is None or now >= self.stats_next_update
-                ):
-                    self._update_stats_background()
+                if self.stats_background is not None and now >= self.stats_next_update:
+                    self.stats_next_update = now + METRICS_INTERVAL_SECONDS
+                    self._stats_requested.set()
+                self._publish_stats_result()
 
                 if now >= next_gif_frame:
                     self.gif_frame_index = (
@@ -241,11 +249,63 @@ class UlanziDaemon:
         except Exception as e:
             logger.warning(f"Failed to connect to OBS: {type(e).__name__}: {e}")
 
-    def _update_stats_background(self):
-        now = time.monotonic()
-        if self.stats_next_update is not None and now < self.stats_next_update:
+    def _start_stats_worker(self):
+        """Run one producer; the polling thread remains the sole HID writer."""
+        if self.stats_background is None or self._stats_thread is not None:
             return
-        self.stats_next_update = now + METRICS_INTERVAL_SECONDS
+        self._stats_stop.clear()
+        self._stats_requested.clear()
+        worker = threading.Thread(target=self._stats_worker, name='ulanzi-stats')
+        worker.start()
+        self._stats_thread = worker
+
+    def _stop_stats_worker(self):
+        """Join before resetting any rendering state or replacing the device."""
+        self._stats_stop.set()
+        self._stats_requested.set()
+        if self._stats_thread is not None:
+            self._stats_thread.join()
+            self._stats_thread = None
+        with self._stats_lock:
+            self._stats_result = None
+
+    def _stats_worker(self):
+        try:
+            while True:
+                self._stats_requested.wait()
+                self._stats_requested.clear()
+                if self._stats_stop.is_set():
+                    return
+                now = time.monotonic()
+                frame = self._render_stats_background(now)
+                with self._stats_lock:
+                    if self._stats_stop.is_set():
+                        return
+                    # A slow consumer needs only the latest complete frame.
+                    self._stats_result = (frame, None)
+        except BaseException as error:
+            with self._stats_lock:
+                if not self._stats_stop.is_set():
+                    self._stats_result = (None, error)
+
+    def _publish_stats_result(self):
+        with self._stats_lock:
+            result, self._stats_result = self._stats_result, None
+        if result is None:
+            return
+        frame, error = result
+        if error is not None:
+            raise RuntimeError("Statistics worker failed") from error
+        self._send_stats_frame(frame)
+
+    def _send_stats_frame(self, frame):
+        self.device.set_buttons({13: {
+            'image_data': frame, 'image_name': 'stats-background.png',
+            'label': '', 'state': 0,
+        }}, partial=True, cache=False)
+
+    def _render_stats_background(self, now):
+        """Collect and render, without touching the device."""
         metrics = self.metrics.sample()
         if self.stats_style['view'] == 'history':
             self.stats_history.append((now, metrics))
@@ -281,10 +341,7 @@ class UlanziDaemon:
                       fill=style['colors'][key]['label_color'], stroke_width=2, stroke_fill="black")
         output = io.BytesIO()
         image.save(output, format='PNG')
-        self.device.set_buttons({13: {
-            'image_data': output.getvalue(), 'image_name': 'stats-background.png',
-            'label': '', 'state': 0,
-        }}, partial=True)
+        return output.getvalue()
 
     def _draw_htop_metric(self, draw, index, key, label, value):
         font, label_font = self.stats_fonts
@@ -341,6 +398,7 @@ class UlanziDaemon:
 
     def _configure_device(self):
         """Configure device with settings from config."""
+        self._stop_stats_worker()
         try:
             self.device.set_brightness(self.config.brightness)
 
@@ -408,7 +466,9 @@ class UlanziDaemon:
                 if self.small_window_mode == 2:
                     self.device.set_small_window_data({'mode': 2})
                     if self.stats_background is not None:
-                        self._update_stats_background()
+                        now = time.monotonic()
+                        self.stats_next_update = now + METRICS_INTERVAL_SECONDS
+                        self._send_stats_frame(self._render_stats_background(now))
                 if self.gif_frames:
                     image_data, _, image_name = self.gif_frames[0]
                     self.device.set_buttons({

@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import unicodedata
@@ -30,7 +31,9 @@ logger = logging.getLogger(__name__)
 
 BUTTON_COUNT = 14
 WIDE_DISPLAY_INDEX = 13
-MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+# Base64 expands image data by 4/3; reserve bounded space for JSON metadata.
+MAX_JSON_BYTES = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 64 * 1024
 MAX_IMAGE_DIMENSION = 4096
 MAX_GIF_FRAMES = 300
 ALLOWED_ACTIONS = {"command", "app", "key", "obs"}
@@ -419,8 +422,12 @@ class WebApp:
         source_name: str,
         scale: int,
     ) -> str:
+        background_bytes = (self.icons_dir / background_name).read_bytes()
+        source_bytes = (self.icons_dir / source_name).read_bytes()
         digest = hashlib.sha256(
-            f"{background_name}\0{source_name}\0{scale}".encode("utf-8")
+            hashlib.sha256(background_bytes).digest()
+            + hashlib.sha256(source_bytes).digest()
+            + str(scale).encode("ascii")
         ).hexdigest()[:10]
         filename = f"{Path(source_name).stem}--background-{digest}.png"
         destination = self.icons_dir / filename
@@ -428,8 +435,8 @@ class WebApp:
             return filename
 
         with (
-            Image.open(self.icons_dir / background_name) as background_image,
-            Image.open(self.icons_dir / source_name) as source_image,
+            Image.open(io.BytesIO(background_bytes)) as background_image,
+            Image.open(io.BytesIO(source_bytes)) as source_image,
         ):
             background = ImageOps.fit(
                 background_image.convert("RGBA"),
@@ -686,7 +693,7 @@ class WebApp:
             image_bytes = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValidationError("Arquivo de imagem inválido") from exc
-        if not image_bytes or len(image_bytes) > MAX_JSON_BYTES:
+        if not image_bytes or len(image_bytes) > MAX_IMAGE_BYTES:
             raise ValidationError("A imagem deve ter no máximo 8 MB")
 
         requested_path = Path(str(payload.get("name") or "icone.png"))
@@ -751,7 +758,7 @@ class WebApp:
                     ) as output:
                         output_path = Path(output.name)
                     rendered.save(output_path, format="PNG", optimize=True)
-            if output_path.stat().st_size > MAX_JSON_BYTES:
+            if output_path.stat().st_size > MAX_IMAGE_BYTES:
                 raise ValidationError("A imagem preparada deve ter no máximo 8 MB")
             os.replace(output_path, destination)
         except (UnidentifiedImageError, OSError) as exc:
@@ -774,7 +781,7 @@ class WebApp:
             image_bytes = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValidationError("Arquivo de imagem inválido") from exc
-        if not image_bytes or len(image_bytes) > MAX_JSON_BYTES:
+        if not image_bytes or len(image_bytes) > MAX_IMAGE_BYTES:
             raise ValidationError("A imagem deve ter no máximo 8 MB")
         try:
             scale = int(payload.get("scale", 100))
@@ -912,8 +919,37 @@ class RequestHandler(BaseHTTPRequestHandler):
         logger.info("%s - %s", self.address_string(), fmt % args)
 
     def _host_allowed(self) -> bool:
-        hostname = self.headers.get("Host", "").split(":", 1)[0].strip("[]").lower()
-        return hostname in {"127.0.0.1", "localhost", "::1"}
+        authorities = self.headers.get_all("Host", [])
+        if len(authorities) != 1:
+            return False
+        authority = authorities[0]
+        if not authority or any(character.isspace() for character in authority):
+            return False
+        try:
+            parsed = urlparse(f"//{authority}")
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            return False
+        if (
+            hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.netloc != authority
+            or parsed.path
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return False
+        host = f"[{hostname}]" if hostname == "::1" else hostname
+        normalized = authority.lower()
+        if normalized == host:
+            return True
+        if not normalized.startswith(f"{host}:") or port is None:
+            return False
+        port_text = normalized[len(host) + 1:]
+        return port_text.isascii() and port_text.isdigit()
 
     def _json(self, payload: Dict[str, Any], status: int = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1051,6 +1087,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._handle_error(exc)
 
 
+class IPv6HTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Interface web local do Ulanzi D200")
     parser.add_argument("--host", default="127.0.0.1")
@@ -1059,9 +1099,11 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server = ThreadingHTTPServer((args.host, args.port), RequestHandler)
+    server_type = IPv6HTTPServer if ":" in args.host else ThreadingHTTPServer
+    server = server_type((args.host, args.port), RequestHandler)
     server.app = WebApp(Path(args.config))  # type: ignore[attr-defined]
-    logger.info("Ulanzi UI available at http://%s:%s", args.host, args.port)
+    url_host = f"[{args.host}]" if ":" in args.host else args.host
+    logger.info("Ulanzi UI available at http://%s:%s", url_host, args.port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

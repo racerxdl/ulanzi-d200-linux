@@ -206,6 +206,22 @@ and memory should remain stable instead of continuously increasing.
 2. Verify all referenced images exist
 3. Use debug mode to identify which buttons need images
 
+### Issue: Statistics updates delay button presses or grow memory usage
+
+Statistics collection and image rendering run on a single worker. The main
+loop continues button polling and keepalive requests, and remains the only HID
+writer. Only one completed frame is retained for handoff. Reconfiguration and
+shutdown join the producer before replacing the image/history state; unexpected
+worker failures propagate to the supervisor rather than silently freezing the
+display.
+
+One-shot statistics frames are not stored in the archive cache. Reusable
+layout/GIF archives use an LRU capped at 16 MiB of compressed payloads and
+128 entries; an individual oversized archive is sent without retention.
+
+If statistics stop updating, inspect the user service journal for the original
+worker error and verify that the configured `Restart=on-failure` unit is active.
+
 ## Verbose Logging
 
 For more detailed output, check the daemon logs:

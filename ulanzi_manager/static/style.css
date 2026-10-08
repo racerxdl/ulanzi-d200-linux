@@ -177,6 +177,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .toggle::after { content: ""; position: absolute; width: 16px; height: 16px; top: 2px; left: 3px; border-radius: 50%; background: #718091; transition: .2s; }
 input:checked + .toggle { border-color: var(--accent); background: rgba(255, 107, 53, .18); }
 input:checked + .toggle::after { left: 18px; background: var(--accent); }
+.toggle-field input:focus-visible + .toggle,
+.switch-label input:focus-visible + .toggle {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 
 .workspace { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, .75fr); gap: 20px; margin-top: 20px; align-items: start; }
 .editor-panel { position: sticky; top: 116px; max-height: calc(100dvh - 132px); overflow-y: auto; }

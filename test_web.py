@@ -1,15 +1,22 @@
 import base64
+import errno
 import io
+import json
+import socket
 import tempfile
 import struct
+import threading
 import unittest
+from contextlib import contextmanager
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 import yaml
 from PIL import Image
 
-from ulanzi_manager.web import ValidationError, WebApp
+from ulanzi_manager.web import IPv6HTTPServer, RequestHandler, ValidationError, WebApp
 
 
 class WebAppTest(unittest.TestCase):
@@ -43,6 +50,248 @@ class WebAppTest(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    @contextmanager
+    def _http_server(self, host="127.0.0.1", server_type=ThreadingHTTPServer):
+        try:
+            server = server_type((host, 0), RequestHandler)
+        except OSError as exc:
+            if host == "::1" and exc.errno in {
+                errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL,
+            }:
+                self.skipTest(f"IPv6 loopback unavailable: {exc}")
+            raise
+        server.app = self.app
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield server
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def _http_request(self, server, method, path, payload=None, headers=None):
+        body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request_headers = {"Content-Type": "application/json"} if body is not None else {}
+        request_headers.update(headers or {})
+        connection = HTTPConnection(server.server_address[0], server.server_port, timeout=15)
+        try:
+            connection.request(method, path, body=body, headers=request_headers)
+            response = connection.getresponse()
+            result = response.read()
+            if response.getheader("Content-Type", "").startswith("application/json"):
+                result = json.loads(result)
+            return response.status, result
+        finally:
+            connection.close()
+
+    def _png_upload_bytes(self, dimension):
+        output = io.BytesIO()
+        Image.new("RGB", (dimension, dimension), "#2463eb").save(
+            output, format="PNG", compress_level=0,
+        )
+        return output.getvalue()
+
+    def _animated_gif_with_metadata(self, size):
+        output = io.BytesIO()
+        frames = [Image.new("RGB", (32, 32), color) for color in ("red", "blue")]
+        frames[0].save(
+            output, format="GIF", save_all=True, append_images=frames[1:],
+            duration=100, loop=0,
+        )
+        image_bytes = output.getvalue()
+        # GIF application metadata uses length-prefixed blocks of at most 255 bytes.
+        # Keep all raster data and the trailer intact while exercising the file limit.
+        block_count, remainder = divmod(size - len(image_bytes) - 15, 256)
+        blocks = (b"\xff" + b"\0" * 255) * block_count
+        if remainder > 1:
+            blocks += bytes([remainder - 1]) + b"\0" * (remainder - 1)
+        metadata = b"\x21\xff\x0bUPLOADSIZE!" + blocks + b"\0"
+        return image_bytes[:-1] + metadata + image_bytes[-1:]
+
+    def test_http_upload_accepts_near_eight_mib_images(self):
+        png = self._png_upload_bytes(1670)
+        gif = self._animated_gif_with_metadata(8 * 1024 * 1024 - 16)
+        with self._http_server() as server:
+            for path, image_bytes, wide in (
+                ("/api/icons", png, False),
+                ("/api/mosaic", png, False),
+                ("/api/icons", gif, True),
+            ):
+                with self.subTest(path=path, wide=wide):
+                    self.assertGreater(len(image_bytes), 8 * 1024 * 1024 - 64 * 1024)
+                    self.assertLessEqual(len(image_bytes), 8 * 1024 * 1024)
+                    status, response = self._http_request(server, "POST", path, {
+                        "name": "near-limit.gif" if wide else "near-limit.png",
+                        "data": base64.b64encode(image_bytes).decode("ascii"),
+                        "wide": wide,
+                    })
+                    self.assertEqual(201, status, response)
+                    filenames = response.get("filenames", [response.get("filename")])
+                    self.assertTrue(filenames)
+                    for filename in filenames:
+                        status, rendered = self._http_request(
+                            server, "GET", f"/api/icons/{filename}",
+                        )
+                        self.assertEqual(200, status)
+                        with Image.open(io.BytesIO(rendered)) as image:
+                            image.load()
+                            if wide:
+                                self.assertEqual(2, image.n_frames)
+                                self.assertEqual((458, 196), image.size)
+                            else:
+                                self.assertEqual((196, 196), image.size)
+
+    def test_http_upload_rejects_decoded_images_over_eight_mib(self):
+        png = self._png_upload_bytes(1675)
+        gif = self._animated_gif_with_metadata(8 * 1024 * 1024 + 4096)
+        original_icons = set(self.icons.iterdir())
+        original_config = self.config_path.read_bytes()
+        with self._http_server() as server:
+            for path, image_bytes, wide in (
+                ("/api/icons", png, False),
+                ("/api/mosaic", png, False),
+                ("/api/icons", gif, True),
+            ):
+                with self.subTest(path=path, wide=wide):
+                    self.assertGreater(len(image_bytes), 8 * 1024 * 1024)
+                    status, response = self._http_request(server, "POST", path, {
+                        "name": "over-limit.gif" if wide else "over-limit.png",
+                        "data": base64.b64encode(image_bytes).decode("ascii"),
+                        "wide": wide,
+                    })
+                    self.assertEqual(400, status, response)
+                    self.assertEqual(original_icons, set(self.icons.iterdir()))
+                    self.assertEqual(original_config, self.config_path.read_bytes())
+
+    def test_http_upload_rejects_oversized_request_before_reading_body(self):
+        original_icons = set(self.icons.iterdir())
+        original_config = self.config_path.read_bytes()
+        with self._http_server() as server:
+            for path in ("/api/icons", "/api/mosaic"):
+                with self.subTest(path=path):
+                    status, response = self._http_request(
+                        server, "POST", path,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Content-Length": str(16 * 1024 * 1024),
+                        },
+                    )
+                    self.assertEqual(400, status, response)
+                    self.assertEqual(original_icons, set(self.icons.iterdir()))
+                    self.assertEqual(original_config, self.config_path.read_bytes())
+
+    def test_http_allows_loopback_hosts_including_bracketed_ipv6(self):
+        with self._http_server() as server:
+            for host in ("localhost", "LOCALHOST:8765", "127.0.0.1:8765", "[::1]", "[::1]:8765"):
+                with self.subTest(host=host):
+                    status, response = self._http_request(
+                        server, "GET", "/api/config", headers={"Host": host},
+                    )
+                    self.assertEqual(200, status, response)
+            config = self.app.get_config()
+            status, response = self._http_request(
+                server, "PUT", "/api/config", config, {"Host": "[::1]:8765"},
+            )
+            self.assertEqual(200, status, response)
+
+    @unittest.skipUnless(socket.has_ipv6, "Python was built without IPv6 support")
+    def test_http_reads_and_saves_config_over_actual_ipv6_loopback(self):
+        with self._http_server(host="::1", server_type=IPv6HTTPServer) as server:
+            status, config = self._http_request(server, "GET", "/api/config")
+            self.assertEqual(200, status, config)
+            config["brightness"] = 42
+            status, saved = self._http_request(server, "PUT", "/api/config", config)
+            self.assertEqual(200, status, saved)
+            self.assertEqual(42, saved["brightness"])
+            persisted = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+            self.assertEqual(42, persisted["brightness"])
+            original = self.config_path.read_bytes()
+            config["brightness"] = 21
+            status, _ = self._http_request(
+                server, "PUT", "/api/config", config, {"Host": "evil.example"},
+            )
+            self.assertEqual(403, status)
+            self.assertEqual(original, self.config_path.read_bytes())
+
+    def test_http_forbids_nonlocal_or_malformed_hosts_without_changing_config(self):
+        original = self.config_path.read_bytes()
+        config = self.app.get_config()
+        config["brightness"] = 42
+        hosts = (
+            "", "evil.example", "localhost.evil.example", "127.0.0.1.evil.example",
+            "[::2]:8765", "::1", "[::1", "[::1]:invalid", "[::1]:65536",
+            "[::1]evil", "[::1]:", "localhost:", "localhost:invalid",
+            "localhost:65536", "user@localhost", "evil.example@localhost",
+            "localhost@evil.example", "localhost/path", "localhost?query",
+            "localhost#fragment", "localhost:8765:123", "localhost\t:8765",
+        )
+        with self._http_server() as server:
+            for host in hosts:
+                for method, payload in (("GET", None), ("PUT", config)):
+                    with self.subTest(host=host, method=method):
+                        status, _ = self._http_request(
+                            server, method, "/api/config", payload, {"Host": host},
+                        )
+                        self.assertEqual(403, status)
+                        self.assertEqual(original, self.config_path.read_bytes())
+
+    def test_http_composite_refreshes_when_source_or_background_is_replaced(self):
+        source = self.icons / "logo.png"
+        background = self.icons / "background.png"
+        Image.new("RGBA", (196, 196), "red").save(source)
+        Image.new("RGBA", (196, 196), "black").save(background)
+        config = self.app.get_config()
+        config["buttons"][0].update({
+            "icon_source": source.name,
+            "image": source.name,
+            "icon_scale": 50,
+            "background_tile": background.name,
+        })
+        rendered_names = []
+        with self._http_server() as server:
+            for source_color, background_color in (
+                ("red", "black"), ("blue", "black"), ("blue", "green"),
+            ):
+                with self.subTest(source=source_color, background=background_color):
+                    Image.new("RGBA", (196, 196), source_color).save(source)
+                    Image.new("RGBA", (196, 196), background_color).save(background)
+                    source_bytes, background_bytes = source.read_bytes(), background.read_bytes()
+                    status, response = self._http_request(server, "PUT", "/api/config", config)
+                    self.assertEqual(200, status, response)
+                    name = response["buttons"][0]["image"]
+                    rendered_names.append(name)
+                    status, rendered = self._http_request(server, "GET", f"/api/icons/{name}")
+                    self.assertEqual(200, status)
+                    with Image.open(io.BytesIO(rendered)) as image:
+                        self.assertEqual(
+                            Image.new("RGBA", (1, 1), source_color).getpixel((0, 0)),
+                            image.getpixel((98, 98)),
+                        )
+                        self.assertEqual(
+                            Image.new("RGBA", (1, 1), background_color).getpixel((0, 0)),
+                            image.getpixel((0, 0)),
+                        )
+                    self.assertEqual(source_bytes, source.read_bytes())
+                    self.assertEqual(background_bytes, background.read_bytes())
+        self.assertEqual(3, len(set(rendered_names)))
+
+    def test_scaled_icon_refreshes_when_source_is_replaced(self):
+        config = self.app.get_config()
+        config["buttons"][0]["icon_scale"] = 50
+        source = self.icons / "default.png"
+        for color in ("red", "blue"):
+            with self.subTest(color=color):
+                Image.new("RGBA", (196, 196), color).save(source)
+                original = source.read_bytes()
+                saved = self.app.save_config(config)
+                with Image.open(self.icons / saved["buttons"][0]["image"]) as image:
+                    self.assertEqual(
+                        Image.new("RGBA", (1, 1), color).getpixel((0, 0)),
+                        image.getpixel((98, 98)),
+                    )
+                self.assertEqual(original, source.read_bytes())
 
     def test_loads_all_fourteen_slots_including_wide_display(self):
         config = self.app.get_config()

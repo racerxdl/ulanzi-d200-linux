@@ -85,9 +85,25 @@ chmod +x ~/.local/bin/ulanzi-daemon
 echo "   ✓ Virtual environment setup complete at ~/.local/ulanzi"
 echo "   ✓ Wrapper script installed at ~/.local/bin/ulanzi-daemon"
 
-# Step 5: Generate example config
-echo "5. Generating example configuration..."
-if [ ! -f ~/.config/ulanzi/config.yaml ]; then
+# Step 5: Install stock icons and generate example config
+echo "5. Installing stock icons and generating example configuration..."
+icons_dir="$HOME/.config/ulanzi/icons"
+if [ ! -e "$icons_dir" ] && [ ! -L "$icons_dir" ]; then
+    mkdir -p "$icons_dir"
+fi
+if [ -d "$icons_dir" ] && [ ! -L "$icons_dir" ]; then
+    for icon in icons/*.png; do
+        destination="$icons_dir/${icon##*/}"
+        # Preserve every existing entry, including dangling symlinks.
+        if [ ! -e "$destination" ] && [ ! -L "$destination" ]; then
+            cp -n --no-dereference -- "$icon" "$destination"
+        fi
+    done
+    echo "   ✓ Stock icons installed without replacing existing entries"
+else
+    echo "   ⚠ Existing icons path is not a regular directory; leaving it unchanged"
+fi
+if [ ! -e ~/.config/ulanzi/config.yaml ] && [ ! -L ~/.config/ulanzi/config.yaml ]; then
     ~/.local/ulanzi/venv/bin/ulanzi-manager generate-config ~/.config/ulanzi/config.yaml
     echo "   ✓ Configuration generated at ~/.config/ulanzi/config.yaml"
 else
@@ -99,6 +115,7 @@ echo "6. Installing the configuration app..."
 install_desktop_shortcut
 mkdir -p ~/.config/systemd/user
 install -m 644 systemd/ulanzi-web.service ~/.config/systemd/user/ulanzi-web.service
+install -m 644 systemd/ulanzi-daemon.service ~/.config/systemd/user/ulanzi-daemon.service
 systemctl --user daemon-reload
 systemctl --user enable --now ulanzi-web.service
 echo "   ✓ Local configuration UI enabled for automatic startup"
