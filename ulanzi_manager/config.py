@@ -52,6 +52,13 @@ METRICS_FONT_FILES = {
 }
 
 
+def parse_content_margin(value=0) -> int:
+    """Validate foreground padding without accepting coerced or boolean values."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 48:
+        raise ValueError("Espaço interno deve estar entre 0 e 48 px")
+    return value
+
+
 def parse_metrics_style(raw=None) -> Dict[str, Any]:
     """Validate the shared UI/daemon metrics display contract."""
     if raw is None:
@@ -64,6 +71,7 @@ def parse_metrics_style(raw=None) -> Dict[str, Any]:
         "size": raw.get("size", 30),
         "font_family": raw.get("font_family", "sans"),
         "font_style": raw.get("font_style", "normal"),
+        "content_margin": parse_content_margin(raw.get("content_margin", 0)),
         "colors": {},
     }
     if style["layout"] not in ("columns", "rows", "compact"):
@@ -110,6 +118,7 @@ class ButtonConfig:
     icon_spec: Optional[Dict[str, Any]] = field(default=None)  # Icon generation spec
     background_tile: Optional[str] = None
     metrics_style: Dict[str, Any] = field(default_factory=parse_metrics_style)
+    content_margin: int = 0
 
 
 @dataclass
@@ -257,6 +266,7 @@ class ConfigParser:
             action_enabled=action_enabled,
             display_mode=display_mode,
             background_tile=background_tile,
+            content_margin=parse_content_margin(data.get('content_margin', 0)),
             metrics_style=parse_metrics_style(data.get('metrics_style')),
             state=state,
             icon_spec=icon_spec
@@ -298,6 +308,10 @@ class ConfigParser:
             errors.append("obs.port must be between 1 and 65535")
 
         for button in config.buttons:
+            try:
+                parse_content_margin(button.content_margin)
+            except ValueError as error:
+                errors.append(f"Button {button.index}: {error}")
             stats_display = (
                 button.index == 13 and button.display_mode == 'stats'
             )

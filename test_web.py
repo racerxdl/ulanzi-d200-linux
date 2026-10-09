@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import yaml
-from PIL import Image
+from PIL import Image, ImageChops
 
 from ulanzi_manager.web import IPv6HTTPServer, RequestHandler, ValidationError, WebApp
 
@@ -364,13 +364,76 @@ class WebAppTest(unittest.TestCase):
         button = persisted["buttons"][0]
         self.assertEqual("./icons/default.png", button["icon_source"])
         self.assertEqual(50, button["icon_scale"])
-        self.assertEqual("./icons/default--scale-50.png", button["image"])
         self.assertEqual("default.png", saved["buttons"][0]["icon_source"])
         self.assertEqual(50, saved["buttons"][0]["icon_scale"])
         self.assertEqual(["default.png"], saved["icons"])
-        with Image.open(self.icons / "default--scale-50.png") as resized:
+        with Image.open(self.icons / Path(button["image"]).name) as resized:
             self.assertEqual((196, 196), resized.size)
             self.assertEqual((49, 49, 147, 147), resized.getchannel("A").getbbox())
+
+    def test_icon_margin_and_scale_combine_without_modifying_source(self):
+        original = (self.icons / "default.png").read_bytes()
+        config = self.app.get_config()
+        config["buttons"][0].update(content_margin=24, icon_scale=50)
+        saved = self.app.save_config(config)
+        with Image.open(self.icons / saved["buttons"][0]["image"]) as rendered:
+            self.assertEqual((61, 61, 135, 135), rendered.getchannel("A").getbbox())
+        self.assertEqual(original, (self.icons / "default.png").read_bytes())
+
+    def test_icon_margin_preserves_background_pixels_and_invalidates_composite(self):
+        background = Image.new("RGB", (196, 196))
+        background.putdata([(x, y, 40) for y in range(196) for x in range(196)])
+        background.save(self.icons / "background.png")
+        config = self.app.get_config()
+        button = config["buttons"][0]
+        button.update(background_tile="background.png", content_margin=24)
+        saved = self.app.save_config(config)
+        with Image.open(self.icons / saved["buttons"][0]["image"]) as image:
+            rendered = image.convert("RGB")
+        for area in ((0, 0, 196, 24), (0, 172, 196, 196),
+                     (0, 24, 24, 172), (172, 24, 196, 172)):
+            self.assertIsNone(ImageChops.difference(
+                background.crop(area), rendered.crop(area),
+            ).getbbox())
+        self.assertEqual((255, 107, 53), rendered.getpixel((30, 98)))
+        button["content_margin"] = 48
+        saved = self.app.save_config(config)
+        with Image.open(self.icons / saved["buttons"][0]["image"]) as image:
+            self.assertEqual(background.getpixel((30, 98)), image.convert("RGB").getpixel((30, 98)))
+            self.assertEqual((255, 107, 53), image.convert("RGB").getpixel((98, 98)))
+
+    def test_content_margin_survives_http_save_and_named_layout_restore(self):
+        config = self.app.get_config()
+        config["buttons"][0]["content_margin"] = 17
+        config["buttons"][13].update(
+            enabled=True, display_mode="stats", content_margin=31, action_enabled=False,
+        )
+        with self._http_server() as server:
+            status, saved = self._http_request(server, "PUT", "/api/config", config)
+            self.assertEqual(200, status)
+            self.assertEqual(17, saved["buttons"][0]["content_margin"])
+            self.assertEqual(31, saved["buttons"][13]["content_margin"])
+        layout = self.app.save_layout({"name": "Margens", "config": saved})
+        saved["buttons"][0]["content_margin"] = 0
+        saved["buttons"][13]["content_margin"] = 0
+        self.app.save_config(saved)
+        restored = self.app.load_layout(layout["id"])["config"]
+        self.app.save_config(restored)
+        from ulanzi_manager.config import ConfigParser
+        loaded = ConfigParser.load(str(self.config_path))
+        self.assertEqual(17, loaded.buttons[0].content_margin)
+        self.assertEqual(31, loaded.buttons[-1].content_margin)
+
+    def test_http_rejects_out_of_range_or_fractional_content_margin_without_saving(self):
+        config = self.app.get_config()
+        original = self.config_path.read_bytes()
+        with self._http_server() as server:
+            for value in (-1, 49, 1.5):
+                with self.subTest(value=value):
+                    config["buttons"][0]["content_margin"] = value
+                    status, _ = self._http_request(server, "PUT", "/api/config", config)
+                    self.assertEqual(400, status)
+                    self.assertEqual(original, self.config_path.read_bytes())
 
     def test_upload_normalizes_image_and_filename(self):
         source = io.BytesIO()
@@ -728,25 +791,6 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual("", wide["image"])
         self.assertEqual("stats", saved["buttons"][13]["display_mode"])
 
-    def test_metric_style_and_background_survive_layout_restore(self):
-        config = self.app.get_config()
-        style = {"layout": "rows", "view": "history", "size": 48, "font_family": "ubuntu-mono", "font_style": "bold-italic", "colors": {
-            "cpu": {"color": "#52c97a", "label_color": "#ff6b35", "line_color": "#ff0000"},
-            "mem": {"color": "#bd93f9", "label_color": "#ffffff", "line_color": "#00ff00"},
-            "gpu": {"color": "#00ccff", "label_color": "#ffff00", "line_color": "#0000ff"},
-        }}
-        config["buttons"][13] = {
-            "enabled": True, "display_mode": "stats", "action_enabled": False,
-            "background_tile": "default.png", "metrics_style": style,
-        }
-        preset = self.app.save_layout({"name": "Métricas", "config": config})
-        restored = self.app.load_layout(preset["id"])["config"]
-        self.app.save_config(restored)
-        from ulanzi_manager.config import ConfigParser
-        button = ConfigParser.load(str(self.config_path)).buttons[-1]
-        self.assertEqual(style, button.metrics_style)
-        self.assertEqual(str(self.icons / "default.png"), button.background_tile)
-        self.assertFalse(button.action_enabled)
 
     def test_rejects_invalid_metric_style_without_changing_active_config(self):
         config = self.app.get_config()

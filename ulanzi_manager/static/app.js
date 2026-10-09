@@ -46,6 +46,9 @@ const elements = {
   iconPreview: $("#iconPreview"),
   logoScale: $("#logoScale"),
   logoScaleValue: $("#logoScaleValue"),
+  contentMarginField: $("#contentMarginField"),
+  contentMargin: $("#contentMargin"),
+  contentMarginValue: $("#contentMarginValue"),
   upload: $("#iconUpload"),
   mosaicUpload: $("#mosaicUpload"),
   mosaicEditor: $("#mosaicEditor"),
@@ -138,12 +141,24 @@ async function refreshStatus() {
   }
 }
 
-function appendPreviewImage(container, name, className, scale = 100) {
+function contentMargin(button) {
+  return Math.max(0, Math.min(48, Math.trunc(Number(button.content_margin) || 0)));
+}
+
+function setForegroundSize(image, button, wide = false, scale = 100) {
+  const margin = wide && button.display_mode === "background" ? 0 : contentMargin(button);
+  const width = wide ? 458 : 196;
+  image.style.width = `${scale * (width - margin * 2) / width}%`;
+  image.style.height = `${scale * (196 - margin * 2) / 196}%`;
+}
+
+function appendPreviewImage(container, name, className, scale = 100, button = null, wide = false) {
   if (!name) return;
   const image = document.createElement("img");
   image.className = className;
   image.src = iconUrl(name);
   image.style.setProperty("--preview-scale", `${scale}%`);
+  if (button) setForegroundSize(image, button, wide, scale);
   image.alt = "";
   container.append(image);
 }
@@ -232,7 +247,12 @@ function renderMetricsPreview(container, button) {
     readout.append(metric);
   });
   if (style.view === "history") appendHistoryPreview(readout, style.colors);
-  container.append(readout);
+  const foreground = document.createElement("div");
+  foreground.className = "metrics-foreground";
+  const margin = contentMargin(button);
+  foreground.style.transform = `scale(${(196 - margin * 2) / 196})`;
+  foreground.append(readout);
+  container.append(foreground);
 }
 
 function renderMiniDeck(container, config) {
@@ -245,12 +265,16 @@ function renderMiniDeck(container, config) {
     if (button.enabled && index === 13 && button.display_mode === "stats") {
       renderMetricsPreview(item, button);
     } else if (button.enabled) {
-      if (index !== 13) appendPreviewImage(item, button.background_tile, "preview-background");
+      if (index !== 13 || button.display_mode !== "background") {
+        appendPreviewImage(item, button.background_tile, "preview-background");
+      }
       appendPreviewImage(
         item,
         button.icon_source || button.image,
         "preview-logo",
-        button.icon_scale || 100,
+        index === 13 ? 100 : (button.icon_scale || 100),
+        button,
+        index === 13,
       );
     }
     container.append(item);
@@ -441,6 +465,7 @@ function swapButtons(from, to) {
 function renderGrid() {
   elements.buttonGrid.replaceChildren();
   state.config.buttons.forEach((button, index) => {
+    button.content_margin ??= 0;
     const card = document.createElement("button");
     card.type = "button";
     card.className = "deck-button";
@@ -455,7 +480,7 @@ function renderGrid() {
     if (button.enabled && statsDisplay) {
       renderMetricsPreview(card, button);
     } else if (button.enabled && iconSource) {
-      if (index !== 13 && button.background_tile) {
+      if ((index !== 13 || button.display_mode !== "background") && button.background_tile) {
         const background = document.createElement("img");
         background.className = "background-layer";
         background.src = iconUrl(button.background_tile);
@@ -465,7 +490,7 @@ function renderGrid() {
       const image = document.createElement("img");
       image.className = "logo-layer";
       image.src = iconUrl(iconSource);
-      image.style.setProperty("--logo-scale", `${button.icon_scale || 100}%`);
+      setForegroundSize(image, button, index === 13, index === 13 ? 100 : (button.icon_scale || 100));
       image.alt = "";
       card.append(image);
     } else {
@@ -566,6 +591,7 @@ function renderIconPreview(name, scale = 100, backgroundName = "") {
   image.className = "logo-layer";
   image.src = iconUrl(name);
   image.style.setProperty("--logo-scale", `${scale}%`);
+  setForegroundSize(image, state.config.buttons[state.selected], state.selected === 13, scale);
   image.alt = "Prévia do ícone";
   elements.iconPreview.append(image);
 }
@@ -871,7 +897,10 @@ function renderEditor() {
   const iconSource = button.icon_source || button.image;
   const iconScale = wide ? 100 : (button.icon_scale || 100);
   refreshIconOptions(iconSource);
-  renderIconPreview(iconSource, iconScale, wide ? "" : button.background_tile);
+  renderIconPreview(iconSource, iconScale, button.background_tile);
+  elements.contentMarginField.hidden = backgroundDisplay;
+  elements.contentMargin.value = contentMargin(button);
+  elements.contentMarginValue.textContent = `${contentMargin(button)} px`;
   elements.logoScale.closest(".logo-size-field").hidden = wide;
   elements.logoScale.value = iconScale;
   elements.logoScaleValue.textContent = `${iconScale}%`;
@@ -1016,6 +1045,22 @@ function bindEvents() {
     }
     markDirty();
     renderEditor();
+  });
+  elements.contentMargin.addEventListener("input", () => {
+    const button = state.config.buttons[state.selected];
+    button.content_margin = Number(elements.contentMargin.value);
+    elements.contentMarginValue.textContent = `${button.content_margin} px`;
+    markDirty();
+    renderGrid();
+    if (state.selected === 13 && button.display_mode === "stats") {
+      renderMetricsPreview(elements.metricsStylePreview, button);
+    } else {
+      renderIconPreview(
+        button.icon_source || button.image,
+        state.selected === 13 ? 100 : (button.icon_scale || 100),
+        button.background_tile,
+      );
+    }
   });
   elements.logoScale.addEventListener("input", () => {
     const button = state.config.buttons[state.selected];
