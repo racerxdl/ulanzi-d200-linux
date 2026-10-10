@@ -11,18 +11,20 @@
 ### Ubuntu/Debian
 ```bash
 sudo apt update
-sudo apt install python3 python3-pip python3-venv xdotool libhidapi-hidraw0
+sudo apt install python3 python3-pip python3-venv xdotool libhidapi-hidraw0 python3-gi gir1.2-gtk-3.0 gir1.2-glib-2.0 librsvg2-common
 ```
 
 ### Fedora/RHEL
 ```bash
-sudo dnf install python3 python3-pip xdotool hidapi
+sudo dnf install python3 python3-pip xdotool hidapi python3-gobject gtk3 librsvg2
 ```
 
 ### Arch
 ```bash
-sudo pacman -S python python-pip xdotool hidapi
+sudo pacman -S python python-pip xdotool hidapi python-gobject gtk3 librsvg
 ```
+
+Installed-app launch and icon import use `/usr/bin/python3` with system GTK/GIO bindings, not the virtualenv interpreter. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
 
 ## Step 2: Clone and Setup
 

@@ -7,12 +7,16 @@ const state = {
   dragged: null,
   ignoreClick: false,
   mosaicDraft: null,
+  mosaicPreviewResult: null,
+  mosaicPreviewToken: 0,
+  mosaicPreviewTimer: null,
   selectedLayoutId: "",
   layoutsRenderToken: 0,
   applications: [],
   applicationsStatus: "idle",
   applicationsError: "",
   applicationsRequest: null,
+  applicationIconImports: new Map(),
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -45,8 +49,9 @@ const elements = {
   upload: $("#iconUpload"),
   mosaicUpload: $("#mosaicUpload"),
   mosaicEditor: $("#mosaicEditor"),
-  mosaicPreviewImage: $("#mosaicPreviewImage"),
-  mosaicPreviewShade: $("#mosaicPreviewShade"),
+  mosaicPreview: $("#mosaicPreview"),
+  mosaicPreviewStatus: $("#mosaicPreviewStatus"),
+  editBackground: $("#editBackgroundButton"),
   mosaicScale: $("#mosaicScale"),
   mosaicScaleValue: $("#mosaicScaleValue"),
   mosaicDarkness: $("#mosaicDarkness"),
@@ -253,6 +258,7 @@ function renderMiniDeck(container, config) {
 }
 
 function renderBackgroundOverview() {
+  elements.editBackground.disabled = !state.config.background;
   elements.backgroundOverview.replaceChildren();
   state.config.buttons.slice(0, 13).forEach((button) => {
     const tile = document.createElement("div");
@@ -345,6 +351,7 @@ async function saveNamedLayout() {
   elements.saveLayout.disabled = true;
   elements.saveLayout.textContent = "Salvando…";
   try {
+    await Promise.all(state.applicationIconImports.values());
     const saved = await api("/api/layouts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -371,6 +378,7 @@ async function loadNamedLayout() {
   try {
     const loaded = await api(`/api/layouts/${encodeURIComponent(layoutId)}`);
     state.config = loaded.config;
+    resetMosaicEditor();
     state.selected = 0;
     state.dirty = true;
     state.iconVersion = Date.now();
@@ -638,6 +646,49 @@ function loadApplications() {
   return state.applicationsRequest;
 }
 
+function importSelectedApplicationIcon(button, application) {
+  if (state.config.buttons.indexOf(button) === 13) return;
+  const params = button.params;
+  const previousSource = button.icon_source;
+  const previousImage = button.image;
+  const isCurrent = () => state.config.buttons.includes(button)
+    && button.action === "app" && button.params === params
+    && params.name === application.desktop_file
+    && button.icon_source === previousSource && button.image === previousImage
+    && state.applicationIconImports.get(button) === request;
+  const request = (async () => {
+    try {
+      const result = await api("/api/applications/icon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: application.id }),
+      });
+      if (!isCurrent()) return;
+      if (!result.filename) {
+        toast("Aplicativo sem ícone disponível; ícone atual mantido");
+        return;
+      }
+      if (!state.config.icons.includes(result.filename)) {
+        state.config.icons.push(result.filename);
+        state.config.icons.sort();
+      }
+      button.icon_source = result.filename;
+      button.image = result.filename;
+      state.iconVersion = Date.now();
+      markDirty();
+      renderGrid();
+      if (state.config.buttons[state.selected] === button) renderEditor();
+    } catch (error) {
+      if (isCurrent()) toast(`Não foi possível obter o ícone: ${error.message}`, true);
+    } finally {
+      if (state.applicationIconImports.get(button) === request) {
+        state.applicationIconImports.delete(button);
+      }
+    }
+  })();
+  state.applicationIconImports.set(button, request);
+}
+
 function applicationFields(button) {
   const wrapper = document.createElement("div");
   wrapper.className = "application-picker";
@@ -738,6 +789,7 @@ function applicationFields(button) {
     params.name = application.desktop_file;
     markDirty();
     updateOptions();
+    importSelectedApplicationIcon(button, application);
   });
 
   const request = loadApplications();
@@ -993,6 +1045,8 @@ function bindEvents() {
   elements.mosaicUpload.addEventListener("change", selectMosaicImage);
   elements.mosaicScale.addEventListener("input", updateMosaicPreview);
   elements.mosaicDarkness.addEventListener("input", updateMosaicPreview);
+  elements.mosaicIncludeWide.addEventListener("change", updateMosaicPreview);
+  elements.editBackground.addEventListener("click", editCurrentBackground);
   elements.applyMosaic.addEventListener("click", applyMosaic);
   elements.save.addEventListener("click", saveAndApply);
   elements.saveLayout.addEventListener("click", saveNamedLayout);
@@ -1043,13 +1097,91 @@ async function uploadIcon() {
   }
 }
 
+function resetMosaicEditor() {
+  clearTimeout(state.mosaicPreviewTimer);
+  state.mosaicPreviewToken += 1;
+  state.mosaicDraft = null;
+  state.mosaicPreviewResult = null;
+  elements.mosaicEditor.hidden = true;
+}
+
+function openMosaicEditor(draft, settings) {
+  resetMosaicEditor();
+  state.mosaicDraft = draft;
+  elements.mosaicScale.value = settings.scale;
+  elements.mosaicDarkness.value = settings.darkness;
+  elements.mosaicIncludeWide.checked = settings.include_wide;
+  elements.mosaicPreview.replaceChildren();
+  elements.mosaicEditor.hidden = false;
+  updateMosaicPreview();
+  elements.mosaicEditor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function editCurrentBackground() {
+  const background = state.config.background;
+  if (background) openMosaicEditor({ source: background.source }, background);
+}
+
+function renderMosaicPreview(result) {
+  elements.mosaicPreview.replaceChildren();
+  result.filenames.slice(0, 13).forEach((filename) => {
+    const tile = document.createElement("div");
+    tile.className = "background-tile";
+    appendPreviewImage(tile, filename, "preview-background");
+    elements.mosaicPreview.append(tile);
+  });
+  const wide = document.createElement("div");
+  wide.className = "background-wide-slot";
+  if (result.background.include_wide) {
+    appendPreviewImage(wide, result.filenames[13], "preview-background");
+  } else {
+    wide.textContent = "Tela larga preservada";
+  }
+  elements.mosaicPreview.append(wide);
+}
+
 function updateMosaicPreview() {
-  const scale = Number(elements.mosaicScale.value);
-  const darkness = Number(elements.mosaicDarkness.value);
-  elements.mosaicScaleValue.textContent = `${scale}%`;
-  elements.mosaicDarknessValue.textContent = `${darkness}%`;
-  elements.mosaicPreviewImage.style.transform = `scale(${scale / 100})`;
-  elements.mosaicPreviewShade.style.background = `rgba(0, 0, 0, ${darkness / 100})`;
+  const draft = state.mosaicDraft;
+  if (!draft) return;
+  const settings = {
+    scale: Number(elements.mosaicScale.value),
+    darkness: Number(elements.mosaicDarkness.value),
+    include_wide: elements.mosaicIncludeWide.checked,
+  };
+  elements.mosaicScaleValue.textContent = `${settings.scale}%`;
+  elements.mosaicDarknessValue.textContent = `${settings.darkness}%`;
+  elements.applyMosaic.disabled = true;
+  state.mosaicPreviewResult = null;
+  elements.mosaicPreviewStatus.textContent = "Preparando prévia…";
+  elements.mosaicPreview.setAttribute("aria-busy", "true");
+  clearTimeout(state.mosaicPreviewTimer);
+  const token = ++state.mosaicPreviewToken;
+  state.mosaicPreviewTimer = setTimeout(async () => {
+    try {
+      const result = await api("/api/mosaic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...draft, ...settings }),
+      });
+      if (state.mosaicDraft !== draft) return;
+      draft.source = result.background.source;
+      delete draft.data;
+      if (token !== state.mosaicPreviewToken) return;
+      state.mosaicPreviewResult = result;
+      renderMosaicPreview(result);
+      elements.mosaicPreviewStatus.textContent = "Prévia dos recortes que serão aplicados";
+      elements.applyMosaic.disabled = false;
+    } catch (error) {
+      if (token === state.mosaicPreviewToken) {
+        elements.mosaicPreviewStatus.textContent = error.message;
+        toast(error.message, true);
+      }
+    } finally {
+      if (token === state.mosaicPreviewToken) {
+        elements.mosaicPreview.setAttribute("aria-busy", "false");
+      }
+    }
+  }, 180);
 }
 
 async function selectMosaicImage() {
@@ -1062,14 +1194,10 @@ async function selectMosaicImage() {
   }
   try {
     const data = await readFileAsDataUrl(file);
-    state.mosaicDraft = { name: file.name, data };
-    elements.mosaicScale.value = 100;
-    elements.mosaicDarkness.value = 0;
-    elements.mosaicIncludeWide.checked = false;
-    elements.mosaicPreviewImage.src = data;
-    elements.mosaicEditor.hidden = false;
-    updateMosaicPreview();
-    elements.mosaicEditor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    openMosaicEditor(
+      { name: file.name, data },
+      { scale: 100, darkness: 0, include_wide: false },
+    );
   } catch (error) {
     toast("Não foi possível abrir a imagem", true);
   } finally {
@@ -1077,50 +1205,34 @@ async function selectMosaicImage() {
   }
 }
 
-async function applyMosaic() {
-  if (!state.mosaicDraft) return;
-  elements.applyMosaic.disabled = true;
-  elements.applyMosaic.textContent = "Preparando…";
-  try {
-    const result = await api("/api/mosaic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...state.mosaicDraft,
-        scale: Number(elements.mosaicScale.value),
-        darkness: Number(elements.mosaicDarkness.value),
-        include_wide: elements.mosaicIncludeWide.checked,
-      }),
-    });
-    result.filenames.slice(0, 13).forEach((filename, index) => {
-      state.config.buttons[index].background_tile = filename;
-    });
-    if (elements.mosaicIncludeWide.checked && result.filenames[13]) {
-      const wide = state.config.buttons[13];
-      wide.background_tile = result.filenames[13];
-      wide.enabled = true;
-      wide.image = result.filenames[13];
-      wide.icon_source = result.filenames[13];
-      wide.icon_scale = 100;
-      if (wide.display_mode !== "stats") wide.display_mode = "background";
-    }
-    state.iconVersion = Date.now();
-    markDirty();
-    renderGrid();
-    renderEditor();
-    toast("Fundo preparado; use “Salvar e aplicar” para enviá-lo ao D200");
-  } catch (error) {
-    toast(error.message, true);
-  } finally {
-    elements.applyMosaic.disabled = false;
-    elements.applyMosaic.textContent = "Aplicar fundo nos botões";
+function applyMosaic() {
+  const result = state.mosaicPreviewResult;
+  if (!result) return;
+  state.config.background = { ...result.background };
+  result.filenames.slice(0, 13).forEach((filename, index) => {
+    state.config.buttons[index].background_tile = filename;
+  });
+  if (result.background.include_wide && result.filenames[13]) {
+    const wide = state.config.buttons[13];
+    wide.background_tile = result.filenames[13];
+    wide.enabled = true;
+    wide.image = result.filenames[13];
+    wide.icon_source = result.filenames[13];
+    wide.icon_scale = 100;
+    if (wide.display_mode !== "stats") wide.display_mode = "background";
   }
+  state.iconVersion = Date.now();
+  markDirty();
+  renderGrid();
+  renderEditor();
+  toast("Fundo preparado; use “Salvar e aplicar” para enviá-lo ao D200");
 }
 
 async function saveAndApply() {
   elements.save.disabled = true;
   elements.save.textContent = "Aplicando…";
   try {
+    await Promise.all(state.applicationIconImports.values());
     const saved = await api("/api/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

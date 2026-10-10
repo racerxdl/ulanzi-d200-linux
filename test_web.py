@@ -402,10 +402,11 @@ class WebAppTest(unittest.TestCase):
         encoded = io.BytesIO()
         source.save(encoded, format="PNG")
 
-        filenames = self.app.upload_mosaic({
+        result = self.app.upload_mosaic({
             "name": "fundo.png",
             "data": base64.b64encode(encoded.getvalue()).decode("ascii"),
         })
+        filenames = result["filenames"]
 
         self.assertEqual(13, len(filenames))
         self.assertNotIn("mosaic", self.app.get_config()["buttons"][13]["image"])
@@ -419,6 +420,7 @@ class WebAppTest(unittest.TestCase):
         logo.paste((255, 0, 0, 255), (66, 66, 130, 130))
         logo.save(self.icons / "logo.png")
         config = self.app.get_config()
+        config["background"] = result["background"]
         for index, filename in enumerate(filenames):
             config["buttons"][index].update({
                 "enabled": True,
@@ -470,14 +472,14 @@ class WebAppTest(unittest.TestCase):
             "data": data,
             "scale": 100,
             "darkness": 0,
-        })
+        })["filenames"]
         edited = self.app.upload_mosaic({
             "name": "fundo.png",
             "data": data,
             "scale": 200,
             "darkness": 50,
             "include_wide": True,
-        })
+        })["filenames"]
 
         self.assertNotEqual(original[0], edited[0])
         with Image.open(self.icons / original[0]) as tile:
@@ -501,6 +503,151 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual("background", saved["buttons"][13]["display_mode"])
         self.assertEqual(edited[13], saved["buttons"][13]["image"])
         self.assertNotIn(edited[13], saved["icons"])
+
+    def test_background_original_and_settings_survive_http_and_layout_reload(self):
+        source = Image.new("RGB", (980, 588), "#20c080")
+        source.paste("#ff0000", (0, 0, 180, 588))
+        encoded = io.BytesIO()
+        source.save(encoded, format="PNG")
+        original_bytes = encoded.getvalue()
+        with self._http_server() as server:
+            status, rendered = self._http_request(server, "POST", "/api/mosaic", {
+                "data": base64.b64encode(original_bytes).decode("ascii"),
+                "scale": 50, "darkness": 35, "include_wide": True,
+            })
+            self.assertEqual(201, status, rendered)
+            metadata = rendered["background"]
+            self.assertEqual(original_bytes, (self.icons / metadata["source"]).read_bytes())
+            self.assertNotIn(metadata["source"], self.app.list_icons())
+            config = self.app.get_config()
+            config["background"] = metadata
+            config["buttons"][0]["background_tile"] = rendered["filenames"][0]
+            config["buttons"][0]["icon_scale"] = 50
+            config["buttons"][13].update({
+                "enabled": True, "display_mode": "stats", "action_enabled": False,
+                "background_tile": rendered["filenames"][13],
+            })
+            status, saved = self._http_request(server, "PUT", "/api/config", config)
+            self.assertEqual(200, status, saved)
+            self.assertEqual(metadata, saved["background"])
+            self.assertEqual("stats", saved["buttons"][13]["display_mode"])
+            layout = self.app.save_layout({"name": "Fundo editável", "config": saved})
+            self.app = WebApp(self.config_path)
+            server.app = self.app
+            status, reloaded = self._http_request(server, "GET", "/api/config")
+            self.assertEqual(200, status)
+            self.assertEqual(metadata, reloaded["background"])
+            self.assertEqual({"cmd": "true"}, reloaded["buttons"][0]["params"])
+            self.assertEqual("default.png", reloaded["buttons"][0]["icon_source"])
+            self.assertEqual(50, reloaded["buttons"][0]["icon_scale"])
+            layout_config = self.app.load_layout(layout["id"])["config"]
+            self.assertEqual(metadata, layout_config["background"])
+            expected_pixels = [
+                (self.icons / name).read_bytes() for name in rendered["filenames"]
+            ]
+            for settings in (reloaded["background"], layout_config["background"]):
+                status, reopened = self._http_request(server, "POST", "/api/mosaic", settings)
+                self.assertEqual(201, status, reopened)
+                self.assertEqual(rendered, reopened)
+                self.assertEqual(expected_pixels, [
+                    (self.icons / name).read_bytes() for name in reopened["filenames"]
+                ])
+            status, resized = self._http_request(server, "POST", "/api/mosaic", {
+                **metadata, "scale": 150, "darkness": 0, "include_wide": False,
+            })
+            self.assertEqual(201, status, resized)
+            self.assertEqual(13, len(resized["filenames"]))
+            self.assertEqual(metadata["source"], resized["background"]["source"])
+            self.assertEqual(original_bytes, (self.icons / metadata["source"]).read_bytes())
+            with Image.open(self.icons / resized["filenames"][0]) as tile:
+                self.assertEqual((32, 192, 128), tile.convert("RGB").getpixel((98, 98)))
+
+    def test_shrinking_background_uses_centered_black_padding_and_exact_wide_crop(self):
+        encoded = io.BytesIO()
+        Image.new("RGBA", (980, 588), "white").save(encoded, format="PNG")
+        data = base64.b64encode(encoded.getvalue()).decode("ascii")
+        for scale in (25, 50, 100):
+            with self.subTest(scale=scale):
+                result = self.app.upload_mosaic({
+                    "data": data, "scale": scale, "include_wide": True,
+                })
+                expected = Image.new("RGBA", (980, 588), (0, 0, 0, 255))
+                width, height = round(980 * scale / 100), round(588 * scale / 100)
+                left, top = (980 - width) // 2, (588 - height) // 2
+                expected.paste((255, 255, 255, 255), (left, top, left + width, top + height))
+                for index, filename in enumerate(result["filenames"][:13]):
+                    row, column = divmod(index, 5)
+                    face = expected.crop((
+                        column * 196, row * 196, (column + 1) * 196, (row + 1) * 196,
+                    ))
+                    with Image.open(self.icons / filename) as tile:
+                        self.assertEqual(face.tobytes(), tile.convert("RGBA").tobytes())
+                wide_expected = expected.crop((588, 392, 980, 588)).resize(
+                    (458, 196), Image.Resampling.LANCZOS,
+                )
+                with Image.open(self.icons / result["filenames"][13]) as wide:
+                    self.assertEqual(wide_expected.tobytes(), wide.convert("RGBA").tobytes())
+
+    def test_legacy_background_is_recovered_without_icons_or_config_rewrite(self):
+        original_config = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+        original_config["buttons"][0]["background_tile"] = "./icons/legacy-tile.png"
+        Image.new("RGB", (196, 196), "#128040").save(self.icons / "legacy-tile.png")
+        Image.new("RGB", (458, 196), "#403080").save(self.icons / "legacy-wide.png")
+        original_config["buttons"][13] = {
+            "image": "./icons/legacy-wide.png", "display_mode": "background",
+            "action_enabled": False, "action": "command", "params": {"cmd": ""},
+        }
+        self.config_path.write_text(yaml.safe_dump(original_config), encoding="utf-8")
+        before = self.config_path.read_bytes()
+        presented = self.app.get_config()
+        metadata = presented["background"]
+        self.assertIsNotNone(metadata)
+        self.assertEqual((100, 0, True), (
+            metadata["scale"], metadata["darkness"], metadata["include_wide"],
+        ))
+        self.assertEqual(before, self.config_path.read_bytes())
+        reopened = self.app.upload_mosaic(metadata)
+        with Image.open(self.icons / reopened["filenames"][0]) as tile:
+            self.assertEqual((18, 128, 64), tile.convert("RGB").getpixel((98, 98)))
+        with Image.open(self.icons / reopened["filenames"][1]) as tile:
+            self.assertEqual((0, 0, 0), tile.convert("RGB").getpixel((98, 98)))
+        with Image.open(self.icons / reopened["filenames"][13]) as wide:
+            self.assertEqual((64, 48, 128), wide.convert("RGB").getpixel((229, 98)))
+        resized = self.app.upload_mosaic({**metadata, "scale": 50})
+        self.assertEqual(metadata["source"], resized["background"]["source"])
+        self.assertEqual(metadata, self.app.save_config(presented)["background"])
+        self.assertEqual("default.png", self.app.get_config()["buttons"][0]["icon_source"])
+
+    def test_mosaic_rejects_invalid_settings_and_untrusted_source_paths(self):
+        encoded = io.BytesIO()
+        Image.new("RGB", (20, 20), "red").save(encoded, format="PNG")
+        data = base64.b64encode(encoded.getvalue()).decode("ascii")
+        for invalid in (
+            {"scale": 24}, {"scale": 201}, {"darkness": -1}, {"darkness": 81},
+            {"scale": "invalid"}, {"include_wide": "false"},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                self.app.upload_mosaic({"data": data, **invalid})
+        rendered = self.app.upload_mosaic({"data": data})
+        source = rendered["background"]["source"]
+        for name in ("../" + source, str(self.icons / source), "default.png", rendered["filenames"][0]):
+            with self.subTest(name=name), self.assertRaisesRegex(ValidationError, "Origem"):
+                self.app.upload_mosaic({"source": name})
+        original = (self.icons / source).read_bytes()
+        external = self.root / "outside.png"
+        external.write_bytes(original)
+        (self.icons / source).unlink()
+        (self.icons / source).symlink_to(external)
+        with self.assertRaisesRegex(ValidationError, "Origem"):
+            self.app.upload_mosaic({"source": source})
+        (self.icons / source).unlink()
+        (self.icons / source).write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValidationError, "Origem"):
+            self.app.upload_mosaic({"source": source})
+        config = self.app.get_config()
+        config["background"] = rendered["background"]
+        with self.assertRaisesRegex(ValidationError, "Origem"):
+            self.app.save_config(config)
 
     def test_upload_preserves_animated_gif_for_wide_display(self):
         source = io.BytesIO()
