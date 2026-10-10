@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import yaml
 
-from ulanzi_manager.config import ConfigParser
+from ulanzi_manager.config import ButtonConfig, Config, ConfigParser, parse_content_margin, parse_metrics_style
 
 
 class FirstRunConfigTests(unittest.TestCase):
@@ -78,6 +78,40 @@ class FirstRunConfigTests(unittest.TestCase):
                     ConfigParser.ensure_default(str(path))
             self.assertFalse(path.exists())
             self.assertEqual([], list(path.parent.iterdir()))
+
+
+class ContentMarginConfigTests(unittest.TestCase):
+    def test_default_and_boundary_values_survive_config_loading(self):
+        for margin in (None, 0, 24, 48):
+            with self.subTest(margin=margin), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "config.yaml"
+                button = {"index": 13, "display_mode": "stats", "action_enabled": False}
+                if margin is not None:
+                    button["content_margin"] = margin
+                path.write_text(yaml.safe_dump({"buttons": [None] * 13 + [button]}))
+                config = ConfigParser.load(str(path))
+                self.assertEqual(margin or 0, config.buttons[0].content_margin)
+                self.assertEqual([], ConfigParser.validate(config))
+        self.assertEqual(0, parse_content_margin())
+        self.assertEqual(0, parse_metrics_style()["content_margin"])
+        self.assertEqual(48, parse_metrics_style({"content_margin": 48})["content_margin"])
+
+    def test_invalid_margin_rejected_in_both_serialized_locations(self):
+        for margin in (-1, 49, True, False, 2.5, "12", None):
+            with self.subTest(margin=margin):
+                with self.assertRaises(ValueError):
+                    parse_content_margin(margin)
+                with self.assertRaises(ValueError):
+                    ConfigParser._parse_button(13, {"content_margin": margin}, Path("."))
+                with self.assertRaises(ValueError):
+                    parse_metrics_style({"content_margin": margin})
+
+    def test_programmatic_configuration_is_validated(self):
+        config = Config(buttons=[ButtonConfig(
+            index=13, image=None, label="", action_type="command", action_params={},
+            action_enabled=False, display_mode="stats", content_margin=49,
+        )])
+        self.assertTrue(any("Espaço interno" in error for error in ConfigParser.validate(config)))
 
 
 if __name__ == "__main__":

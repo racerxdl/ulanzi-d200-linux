@@ -5,6 +5,7 @@
 - Python 3.9 or higher
 - Linux system with USB support
 - `xdotool` for keyboard shortcuts (optional but recommended)
+- Running user systemd manager and `systemd-run` with `--expand-environment` support for application and command actions
 
 ## Step 1: Install System Dependencies
 

@@ -9,6 +9,18 @@ from abc import ABC, abstractmethod
 logger = logging.getLogger(__name__)
 
 
+def _launch_independent(command, *, desktop=False):
+    """Keep launched applications outside the daemon's restart/stop cgroup."""
+    return subprocess.Popen(
+        [
+            'systemd-run', '--user', '--scope', '--collect', '--quiet',
+            '--expand-environment=no', '--', *command,
+        ],
+        stdout=None if desktop else subprocess.DEVNULL,
+        stderr=None,
+    )
+
+
 class ActionHandler(ABC):
     """Base class for action handlers"""
 
@@ -29,7 +41,7 @@ class CommandAction(ActionHandler):
             return
 
         try:
-            subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _launch_independent(['/bin/sh', '-c', cmd])
             logger.info(f"Executed command: {cmd}")
         except Exception as e:
             logger.error(f"Failed to execute command: {e}")
@@ -52,10 +64,7 @@ class AppAction(ActionHandler):
                 ['/usr/bin/python3', str(Path(__file__).with_name('desktop_launcher.py')), app_name]
                 if desktop else [app_name]
             )
-            subprocess.Popen(
-                command, stdout=None if desktop else subprocess.DEVNULL,
-                stderr=None if desktop else subprocess.DEVNULL,
-            )
+            _launch_independent(command, desktop=desktop)
             logger.info(f"Requested application launch: {app_name}")
         except Exception as e:
             logger.error(f"Failed to launch application: {e}")

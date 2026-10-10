@@ -25,7 +25,9 @@ from urllib.parse import unquote, urlparse
 import yaml
 from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 
-from ulanzi_manager.config import ConfigParser, parse_metrics_style, METRICS_FONT_FILES
+from ulanzi_manager.config import (
+    ConfigParser, parse_metrics_style, parse_content_margin, METRICS_FONT_FILES,
+)
 from ulanzi_manager.application_icons import import_application_icon
 
 logger = logging.getLogger(__name__)
@@ -109,6 +111,7 @@ class WebApp:
                     "image": "",
                     "icon_source": "",
                     "icon_scale": 100,
+                    "content_margin": 0,
                     "background_tile": "",
                     "action": "command",
                     "params": {"cmd": ""},
@@ -138,6 +141,7 @@ class WebApp:
                 "image": Path(image).name if image else "",
                 "icon_source": Path(icon_source).name if icon_source else "",
                 "icon_scale": icon_scale,
+                "content_margin": parse_content_margin(item.get("content_margin", 0)),
                 "background_tile": Path(
                     item.get("background_tile") or ""
                 ).name,
@@ -407,15 +411,17 @@ class WebApp:
         logger.info("Layout deleted: %s", path)
         return {"deleted": True}
 
-    def render_scaled_icon(self, source_name: str, scale: int) -> str:
-        if scale == 100:
+    def render_scaled_icon(self, source_name: str, scale: int, content_margin: int = 0) -> str:
+        if scale == 100 and content_margin == 0:
             return source_name
 
         source = self.icons_dir / source_name
         filename = "{}--scale-{}.png".format(source.stem, scale)
+        if content_margin:
+            filename = "{}--scale-{}-margin-{}.png".format(source.stem, scale, content_margin)
         destination = self.icons_dir / filename
         with Image.open(source) as image:
-            target = max(1, round(196 * scale / 100))
+            target = max(1, round((196 - 2 * content_margin) * scale / 100))
             logo = ImageOps.contain(
                 image.convert("RGBA"),
                 (target, target),
@@ -441,14 +447,18 @@ class WebApp:
         background_name: str,
         source_name: str,
         scale: int,
+        content_margin: int = 0,
     ) -> str:
         background_bytes = (self.icons_dir / background_name).read_bytes()
         source_bytes = (self.icons_dir / source_name).read_bytes()
-        digest = hashlib.sha256(
+        signature = (
             hashlib.sha256(background_bytes).digest()
             + hashlib.sha256(source_bytes).digest()
             + str(scale).encode("ascii")
-        ).hexdigest()[:10]
+        )
+        if content_margin:
+            signature += f":margin:{content_margin}".encode("ascii")
+        digest = hashlib.sha256(signature).hexdigest()[:10]
         filename = f"{Path(source_name).stem}--background-{digest}.png"
         destination = self.icons_dir / filename
         if destination.is_file():
@@ -463,7 +473,7 @@ class WebApp:
                 (196, 196),
                 Image.Resampling.LANCZOS,
             )
-            target = max(1, round(196 * scale / 100))
+            target = max(1, round((196 - 2 * content_margin) * scale / 100))
             logo = ImageOps.contain(
                 source_image.convert("RGBA"),
                 (target, target),
@@ -555,6 +565,11 @@ class WebApp:
                 buttons.append(None)
                 continue
 
+            try:
+                content_margin = parse_content_margin(button.get("content_margin", 0))
+            except ValueError as exc:
+                raise ValidationError("Botão {}: {}".format(index + 1, exc)) from exc
+
             source_name = Path(
                 str(button.get("icon_source") or button.get("image") or "")
             ).name
@@ -613,9 +628,10 @@ class WebApp:
                         background_name,
                         source_name,
                         icon_scale,
+                        content_margin,
                     )
                 else:
-                    image_name = self.render_scaled_icon(source_name, icon_scale)
+                    image_name = self.render_scaled_icon(source_name, icon_scale, content_margin)
 
             action_enabled = bool(
                 button.get("action_enabled", index != WIDE_DISPLAY_INDEX)
@@ -638,6 +654,7 @@ class WebApp:
                     "./icons/{}".format(source_name) if source_name else ""
                 ),
                 "icon_scale": icon_scale,
+                "content_margin": content_margin,
                 "label": label,
                 "action": action,
                 "params": params,
@@ -651,6 +668,7 @@ class WebApp:
                 saved_button["display_mode"] = display_mode
                 try:
                     saved_button["metrics_style"] = parse_metrics_style(button.get("metrics_style"))
+                    saved_button["metrics_style"]["content_margin"] = content_margin
                 except ValueError as exc:
                     raise ValidationError("Botão 14: {}".format(exc)) from exc
                 wide_background = Path(str(button.get("background_tile") or "")).name

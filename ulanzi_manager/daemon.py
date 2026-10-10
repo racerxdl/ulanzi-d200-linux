@@ -12,7 +12,7 @@ from typing import Optional
 from PIL import Image, ImageSequence, ImageDraw, ImageFont, ImageOps
 
 from ulanzi_manager.device import UlanziDevice, ButtonPress
-from ulanzi_manager.config import ConfigParser, Config, METRICS_FONT_FILES
+from ulanzi_manager.config import ConfigParser, Config, METRICS_FONT_FILES, parse_content_margin
 from ulanzi_manager.actions import ActionExecutor
 from ulanzi_manager.metrics import SystemMetrics
 
@@ -37,9 +37,17 @@ MIN_GIF_FRAME_SECONDS = 0.1
 MAX_GIF_FRAME_SECONDS = 4.0
 
 
-def _load_gif_frames(path: str):
-    """Decode GIF frames once for low-cost HID updates."""
+def _load_gif_frames(path: str, content_margin=0, background_tile=None):
+    """Decode composited GIF frames, preserving source disposal and timing."""
+    content_margin = parse_content_margin(content_margin)
     frames = []
+    background = None
+    if content_margin or background_tile:
+        if background_tile:
+            with Image.open(background_tile) as tile:
+                background = ImageOps.fit(tile.convert('RGBA'), (458, 196))
+        else:
+            background = Image.new('RGBA', (458, 196), 'black')
     with Image.open(path) as image:
         for frame in ImageSequence.Iterator(image):
             duration = min(
@@ -50,7 +58,18 @@ def _load_gif_frames(path: str):
                 ),
             )
             output = io.BytesIO()
-            frame.convert('RGBA').save(output, format='PNG')
+            foreground = frame.convert('RGBA')
+            if background is not None:
+                foreground = ImageOps.contain(
+                    foreground,
+                    (458 - 2 * content_margin, 196 - 2 * content_margin),
+                    Image.Resampling.LANCZOS,
+                )
+                composed = background.copy()
+                position = ((458 - foreground.width) // 2, (196 - foreground.height) // 2)
+                composed.alpha_composite(foreground, position)
+                foreground = composed
+            foreground.save(output, format='PNG')
             image_data = output.getvalue()
             digest = hashlib.sha256(image_data).hexdigest()[:16]
             frames.append((
@@ -311,9 +330,11 @@ class UlanziDaemon:
         if self.stats_style['view'] == 'history':
             self.stats_history.append((now, metrics))
         image = self.stats_background.copy()
-        draw = ImageDraw.Draw(image, 'RGBA')
-        font, label_font = self.stats_fonts
         style = self.stats_style
+        margin = style.get('content_margin', 0)
+        foreground = Image.new('RGBA', image.size) if margin else image
+        draw = ImageDraw.Draw(foreground, 'RGBA')
+        font, label_font = self.stats_fonts
         if style['view'] == 'history':
             self._draw_history_grid(draw)
         for index, (key, label) in enumerate((('cpu', 'CPU'), ('mem', 'RAM'), ('gpu', 'GPU'))):
@@ -340,6 +361,14 @@ class UlanziDaemon:
                       fill=style['colors'][key]['color'], stroke_width=2, stroke_fill="black")
             draw.text(label_position, label, font=label_font, anchor=label_anchor,
                       fill=style['colors'][key]['label_color'], stroke_width=2, stroke_fill="black")
+        if margin:
+            foreground = ImageOps.contain(
+                foreground,
+                (image.width - 2 * margin, image.height - 2 * margin),
+                Image.Resampling.LANCZOS,
+            )
+            position = ((image.width - foreground.width) // 2, (image.height - foreground.height) // 2)
+            image.paste(foreground, position, foreground)
         output = io.BytesIO()
         image.save(output, format='PNG')
         return output.getvalue()
@@ -423,7 +452,9 @@ class UlanziDaemon:
                 if button.index == 13:
                     if button.display_mode == 'gif' and button.image:
                         self.small_window_mode = 2
-                        self.gif_frames = _load_gif_frames(button.image)
+                        self.gif_frames = _load_gif_frames(
+                            button.image, button.content_margin, button.background_tile
+                        )
                         # Select background mode first; animate decoded PNG
                         # frames only after the full layout import is complete.
                         button_data.pop('image')
@@ -441,7 +472,9 @@ class UlanziDaemon:
                                 self.stats_background = ImageOps.fit(image.convert('RGB'), (458, 196))
                         else:
                             self.stats_background = Image.new('RGB', (458, 196), 'black')
-                        self.stats_style = button.metrics_style
+                        self.stats_style = {
+                            **button.metrics_style, 'content_margin': button.content_margin,
+                        }
                         size = self.stats_style['size']
                         compact_text = self.stats_style['view'] == 'text' and self.stats_style['layout'] == 'compact'
                         label_ratio = 0.45 if compact_text else 0.73

@@ -15,12 +15,25 @@ creating one, so a mistyped validation path cannot silently create a profile.
 
 **Editar fundo atual** reopens the saved background settings. Newly uploaded originals are immutable `mosaic-source-<hash>` files in the configured icons directory; keep them alongside the generated tiles when backing up configurations and layouts. They are intentionally absent from the button icon picker. Legacy backgrounds are reconstructed from existing tiles, so previously cropped or darkened detail cannot be restored. The editor previews the actual generated tiles, including the wide crop when enabled; **Aplicar fundo nos botões** changes the draft and **Salvar e aplicar** persists it to the device.
 
+**Margem do conteúdo** is per-button foreground padding, not a mosaic editor setting. Valid `content_margin` values are integers from 0 through 48 pixels; missing fields default to zero. Normal icon scaling uses the remaining inset area, while wide GIFs and statistics preserve their aspect ratio over a full-size background tile (or black when none exists). Wide **Imagem de fundo** ignores this setting. If content looks unexpectedly small, check both icon size and margin; large margins also reduce the rendered size of wide metrics. The UI preview updates immediately, but **Salvar e aplicar** is required to update the device.
+
 Choosing an installed application on buttons 1–13 imports its icon without launching the app. Missing icons preserve the current image; import errors appear as a UI notification. Button 14 never replaces its GIF or statistics merely because an application action was selected. If PNG/SVG decoding or theme resolution fails, check the native GTK/GdkPixbuf dependencies in [INSTALL.md](INSTALL.md), the system MIME database, and the web-service journal:
 
 ```bash
 journalctl --user -u ulanzi-web.service -n 100 --no-pager
 ```
 
+
+## Applications Closing When Applying Configuration
+
+**Salvar e aplicar** restarts `ulanzi-daemon.service`. Applications and commands must run in separate transient `run-*.scope` units, not inside that service's cgroup. Check membership with:
+
+```bash
+systemd-cgls --user-unit ulanzi-daemon.service
+cat /proc/APP_PID/cgroup
+```
+
+If an application belongs to `ulanzi-daemon.service`, it was opened by an older direct-launch version and will be terminated by the service's normal `KillMode=control-group` shutdown. Open existing applications from the system menu before restarting to load the corrected launcher. New launches use independent user scopes and survive daemon restarts. Do not weaken the service's kill policy or rely on `nohup`/`setsid`: neither moves a process out of its systemd cgroup. If a new launch fails, inspect `journalctl --user -u ulanzi-daemon.service`; a running user manager and a compatible `systemd-run` are required.
 
 ## Debug Mode - Identify Button Presses
 

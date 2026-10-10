@@ -4,9 +4,10 @@ import io
 import threading
 from unittest.mock import patch
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageChops, ImageOps, ImageSequence
+import yaml
 
-from ulanzi_manager.config import ButtonConfig, Config, parse_metrics_style
+from ulanzi_manager.config import ButtonConfig, Config, ConfigParser, parse_metrics_style
 from ulanzi_manager.daemon import UlanziDaemon, _load_gif_frames
 from ulanzi_manager.device import ButtonPress
 
@@ -613,6 +614,7 @@ class UlanziDaemonTest(unittest.TestCase):
                         action_params={"cmd": ""},
                         action_enabled=False,
                         display_mode="background",
+                        content_margin=48,
                     )
                 ]
             )
@@ -693,6 +695,123 @@ class UlanziDaemonTest(unittest.TestCase):
             daemon.run()
 
         self.assertEqual(1, device.close_count)
+
+
+class ContentMarginRenderingTests(unittest.TestCase):
+    def test_stats_foreground_is_inset_without_resizing_or_darkening_background(self):
+        with tempfile.TemporaryDirectory() as directory:
+            background_path = Path(directory) / "background.png"
+            background = Image.new("RGB", (458, 196))
+            background.putdata([
+                (x % 256, y % 256, (x + y) % 256)
+                for y in range(196) for x in range(458)
+            ])
+            background.save(background_path)
+            for view, layout in (("text", "columns"), ("text", "rows"), ("text", "compact"),
+                                 ("htop", "columns"), ("history", "columns")):
+                for margin in (16, 48):
+                    with self.subTest(view=view, layout=layout, margin=margin):
+                        daemon = UlanziDaemon("unused.yaml")
+                        device = StatsDisplay()
+                        device.clock = FakeClock(daemon)
+                        daemon.device = device
+                        daemon.metrics.sample = lambda: {"cpu": 75, "mem": 50, "gpu": 25}
+                        style = parse_metrics_style({
+                            "view": view, "layout": layout, "content_margin": 1,
+                        })
+                        daemon.config = Config(buttons=[ButtonConfig(
+                            index=13, image=None, label="", action_type="command", action_params={},
+                            action_enabled=False, display_mode="stats",
+                            background_tile=str(background_path), content_margin=margin,
+                            metrics_style=style,
+                        )])
+                        with patch("ulanzi_manager.daemon.time.monotonic", return_value=0):
+                            daemon._configure_device()
+                        self.assertEqual(margin, daemon.stats_style["content_margin"])
+                        self.assertEqual(1, style["content_margin"])
+                        self.assertIsNone(ImageChops.difference(background, daemon.stats_background).getbbox())
+                        difference = ImageChops.difference(background, device.frame)
+                        bbox = difference.getbbox()
+                        self.assertIsNotNone(bbox)
+                        width, height = ImageOps.contain(
+                            Image.new("RGBA", (458, 196)), (458 - 2 * margin, 196 - 2 * margin)
+                        ).size
+                        left, top = (458 - width) // 2, (196 - height) // 2
+                        self.assertGreaterEqual(bbox[0], left)
+                        self.assertGreaterEqual(bbox[1], top)
+                        self.assertLessEqual(bbox[2], left + width)
+                        self.assertLessEqual(bbox[3], top + height)
+                        for region in ((0, 0, 458, margin), (0, 196 - margin, 458, 196),
+                                       (0, 0, margin, 196), (458 - margin, 0, 458, 196)):
+                            self.assertIsNone(difference.crop(region).getbbox())
+
+    def test_gif_padding_preserves_decoded_disposal_timing_and_original_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "animation.gif"
+            tile_path = Path(directory) / "tile.png"
+            palette = [0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255] + [0] * (768 - 12)
+            frames = []
+            for index in (1, 2, 3):
+                frame = Image.new("P", (90, 60), 0)
+                frame.putpalette(palette)
+                frame.paste(index, ((index - 1) * 30, 10, index * 30, 50))
+                frames.append(frame)
+            frames[0].save(
+                path, save_all=True, append_images=frames[1:], optimize=False,
+                transparency=0, disposal=[1, 2, 1], duration=[40, 250, 700], loop=0,
+            )
+            original = path.read_bytes()
+            tile = Image.new("RGBA", (458, 196), (32, 64, 96, 255))
+            tile.paste((200, 100, 50, 255), (0, 0, 100, 196))
+            tile.save(tile_path)
+            with Image.open(path) as source:
+                reference = [frame.convert("RGBA").copy() for frame in ImageSequence.Iterator(source)]
+            self.assertEqual(3, len(reference))
+            self.assertEqual((0, 255, 0, 255), reference[1].getpixel((45, 30)))
+            self.assertEqual(0, reference[2].getpixel((45, 30))[3])
+            self.assertEqual((0, 0, 255, 255), reference[2].getpixel((75, 30)))
+            zero_margin = _load_gif_frames(str(path))
+            for source, (data, _, _) in zip(reference, zero_margin):
+                with Image.open(io.BytesIO(data)) as actual:
+                    self.assertEqual(source.size, actual.size)
+                    self.assertEqual(source.tobytes(), actual.convert("RGBA").tobytes())
+            for background_tile, color in ((str(tile_path), None), (None, "black")):
+                with self.subTest(background_tile=background_tile):
+                    decoded = _load_gif_frames(str(path), 20, background_tile)
+                    self.assertEqual([0.1, 0.25, 0.7], [entry[1] for entry in decoded])
+                    self.assertEqual(3, len({entry[2] for entry in decoded}))
+                    for source, (data, _, _) in zip(reference, decoded):
+                        expected = tile.copy() if background_tile else Image.new("RGBA", (458, 196), color)
+                        inset = ImageOps.contain(source, (418, 156), Image.Resampling.LANCZOS)
+                        expected.alpha_composite(inset, ((458 - inset.width) // 2, (196 - inset.height) // 2))
+                        with Image.open(io.BytesIO(data)) as actual:
+                            self.assertEqual((458, 196), actual.size)
+                            self.assertEqual(expected.tobytes(), actual.convert("RGBA").tobytes())
+                    self.assertEqual(original, path.read_bytes())
+
+    def test_raw_config_margin_reaches_daemon_gif_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "animation.gif"
+            config_path = Path(directory) / "config.yaml"
+            Image.new("RGB", (458, 196), "red").save(
+                path, save_all=True, append_images=[Image.new("RGB", (458, 196), "blue")],
+                duration=[100, 250],
+            )
+            config_path.write_text(yaml.safe_dump({"buttons": [None] * 13 + [{
+                "image": "animation.gif", "display_mode": "gif",
+                "action_enabled": False, "content_margin": 48,
+            }]}))
+            daemon = UlanziDaemon(str(config_path))
+            daemon.config = ConfigParser.load(str(config_path))
+            device = StatsDisplay()
+            device.clock = FakeClock(daemon)
+            daemon.device = device
+            daemon._configure_device()
+            self.assertEqual(48, daemon.config.buttons[0].content_margin)
+            self.assertEqual((0, 0, 0), device.frame.getpixel((229, 47)))
+            self.assertEqual((255, 0, 0), device.frame.getpixel((229, 48)))
+            self.assertEqual((0, 0, 0), device.frame.getpixel((229, 148)))
+            self.assertEqual([0.1, 0.25], [frame[1] for frame in daemon.gif_frames])
 
 
 if __name__ == "__main__":
