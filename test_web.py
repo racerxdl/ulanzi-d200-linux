@@ -51,6 +51,69 @@ class WebAppTest(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_background_fills_disabled_slots_after_save_and_layout_restore(self):
+        from ulanzi_manager.config import ConfigParser
+
+        source = Image.new("RGB", (980, 588))
+        for index in range(15):
+            row, column = divmod(index, 5)
+            source.paste((index * 15, 80, 160), (
+                column * 196, row * 196, (column + 1) * 196, (row + 1) * 196,
+            ))
+        data = io.BytesIO()
+        source.save(data, format="PNG")
+        config = self.app.get_config()
+        for button in config["buttons"]:
+            button["enabled"] = False
+        with self._http_server() as server:
+            status, mosaic = self._http_request(server, "POST", "/api/mosaic", {
+                "data": base64.b64encode(data.getvalue()).decode("ascii"),
+                "include_wide": True,
+            })
+            self.assertEqual(201, status, mosaic)
+            config["background"] = mosaic["background"]
+            status, saved = self._http_request(server, "PUT", "/api/config", config)
+            self.assertEqual(200, status, saved)
+        layout = self.app.save_layout({"name": "Fundo sem ações", "config": saved})
+        restored = self.app.load_layout(layout["id"])["config"]
+        self.app.save_config(restored)
+        loaded = ConfigParser.load(str(self.config_path))
+        self.assertEqual([], ConfigParser.validate(loaded))
+        self.assertEqual(list(range(14)), [button.index for button in loaded.buttons])
+        for button in loaded.buttons:
+            self.assertFalse(restored["buttons"][button.index]["enabled"])
+            self.assertFalse(button.action_enabled)
+            self.assertEqual("", button.label)
+            with Image.open(button.image) as image:
+                self.assertEqual((458, 196) if button.index == 13 else (196, 196), image.size)
+                self.assertEqual(
+                    (button.index * 15, 80, 160), image.convert("RGB").getpixel((98, 98)),
+                )
+        self.assertEqual("background", loaded.buttons[13].display_mode)
+
+    def test_existing_background_restores_null_faces_without_rewriting_config(self):
+        data = io.BytesIO()
+        Image.new("RGB", (980, 588), "#2671b9").save(data, format="PNG")
+        mosaic = self.app.upload_mosaic({
+            "data": base64.b64encode(data.getvalue()).decode("ascii"),
+            "include_wide": False,
+        })
+        raw = yaml.safe_load(self.config_path.read_text())
+        raw["background"] = mosaic["background"]
+        raw["buttons"] = [None] * 14
+        self.config_path.write_text(yaml.safe_dump(raw))
+        original = self.config_path.read_bytes()
+        recovered = self.app.get_config()
+        self.assertEqual(original, self.config_path.read_bytes())
+        for button in recovered["buttons"][:13]:
+            self.assertFalse(button["enabled"])
+            with Image.open(self.icons / button["background_tile"]) as image:
+                self.assertEqual((38, 113, 185), image.convert("RGB").getpixel((98, 98)))
+        self.assertEqual("", recovered["buttons"][13]["background_tile"])
+        saved = self.app.save_config(recovered)
+        self.assertFalse(any(button["enabled"] for button in saved["buttons"]))
+        self.assertIsNone(yaml.safe_load(self.config_path.read_text())["buttons"][13])
+
     def test_large_static_image_uploads_are_resized_and_original_can_be_edited(self):
         original = self.config_path.read_bytes()
         data = io.BytesIO()

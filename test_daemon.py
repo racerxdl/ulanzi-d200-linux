@@ -88,6 +88,37 @@ class StatsDisplay(FakeDevice):
 
 
 class UlanziDaemonTest(unittest.TestCase):
+    def test_disabled_background_faces_never_activate_saved_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (196, 196), "red").save(root / "background.png")
+            Image.new("RGB", (196, 196), "blue").save(root / "foreground.png")
+            inactive = {
+                "enabled": False, "image": "foreground.png",
+                "background_tile": "background.png", "label": "Hidden",
+                "action": "command", "params": {"cmd": "must-not-run"},
+                "action_enabled": True, "display_mode": "stats",
+            }
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump({"buttons": [
+                inactive,
+                {"image": "foreground.png", "action": "command", "params": {"cmd": "allowed"}},
+                *([None] * 11), inactive,
+            ]}))
+            daemon = UlanziDaemon(str(path))
+            daemon.config = ConfigParser.load(str(path))
+            self.assertEqual([], ConfigParser.validate(daemon.config))
+            daemon.executor = FakeExecutor()
+            for index in (0, 13):
+                face = next(button for button in daemon.config.buttons if button.index == index)
+                self.assertEqual("", face.label)
+                with Image.open(face.image) as image:
+                    self.assertEqual((255, 0, 0), image.convert("RGB").getpixel((98, 98)))
+                daemon._on_button_press(ButtonPress(index=index, pressed=True, state=0))
+            self.assertEqual([], daemon.executor.calls)
+            daemon._on_button_press(ButtonPress(index=1, pressed=True, state=0))
+            self.assertEqual([("command", {"cmd": "allowed"})], daemon.executor.calls)
+
     def test_first_run_provisions_and_renders_without_missing_images(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "new" / "config.yaml"

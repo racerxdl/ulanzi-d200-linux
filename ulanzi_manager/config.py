@@ -234,25 +234,28 @@ class ConfigParser:
     def _parse_button(index: int, data: Dict, base_path: Path) -> ButtonConfig:
         """Parse button configuration"""
         # Resolve image path relative to config file
-        image = data.get('image')
+        enabled = bool(data.get('enabled', True))
+        image = data.get('image') if enabled else data.get('background_tile')
         if image:
             image_path = Path(image)
             if not image_path.is_absolute():
                 image_path = base_path / image_path
             image = str(image_path)
 
-        label = data.get('label', '')
+        label = data.get('label', '') if enabled else ''
         action_type = data.get('action', 'command')
         action_params = data.get('params', {})
-        action_enabled = bool(data.get('action_enabled', index != 13))
+        action_enabled = enabled and bool(data.get('action_enabled', index != 13))
         default_display_mode = 'stats'
         if index == 13 and image:
             default_display_mode = (
                 'gif' if Path(image).suffix.lower() == '.gif' else 'background'
             )
-        display_mode = str(data.get('display_mode', default_display_mode))
+        display_mode = (
+            str(data.get('display_mode', default_display_mode)) if enabled else 'background'
+        )
         state = data.get('state', 0)
-        icon_spec = data.get('icon_spec')
+        icon_spec = data.get('icon_spec') if enabled else None
         background_tile = data.get('background_tile')
         if background_tile:
             background_tile = str(base_path / background_tile)
