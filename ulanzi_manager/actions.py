@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Dict, Any
 from abc import ABC, abstractmethod
 
+from ulanzi_manager.native_python import native_python
+
 logger = logging.getLogger(__name__)
 
 
-def _launch_independent(command, *, desktop=False):
+def _launch_independent(command, *, desktop=False, env=None):
     """Keep launched applications outside the daemon's restart/stop cgroup."""
     return subprocess.Popen(
         [
@@ -18,6 +20,7 @@ def _launch_independent(command, *, desktop=False):
         ],
         stdout=None if desktop else subprocess.DEVNULL,
         stderr=None,
+        env=env,
     )
 
 
@@ -60,11 +63,13 @@ class AppAction(ActionHandler):
         try:
             app_path = Path(app_name)
             desktop = app_path.is_absolute() and app_path.suffix == '.desktop'
-            command = (
-                ['/usr/bin/python3', str(Path(__file__).with_name('desktop_launcher.py')), app_name]
-                if desktop else [app_name]
-            )
-            _launch_independent(command, desktop=desktop)
+            environment = None
+            if desktop:
+                python, environment = native_python()
+                command = [*python, str(Path(__file__).with_name('desktop_launcher.py')), app_name]
+            else:
+                command = [app_name]
+            _launch_independent(command, desktop=desktop, env=environment)
             logger.info(f"Requested application launch: {app_name}")
         except Exception as e:
             logger.error(f"Failed to launch application: {e}")

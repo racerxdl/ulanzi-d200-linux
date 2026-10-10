@@ -16,6 +16,8 @@ from typing import Optional
 
 from PIL import Image, UnidentifiedImageError
 
+from ulanzi_manager.native_python import native_python
+
 logger = logging.getLogger(__name__)
 
 _MISSING_ICON = 3
@@ -32,8 +34,10 @@ def import_application_icon(desktop_file: str, icons_dir: Path) -> Optional[str]
     """
     helper = Path(__file__).with_name("desktop_icon.py")
     try:
+        python, environment = native_python()
         result = subprocess.run(
-            ["/usr/bin/python3", str(helper), desktop_file],
+            [*python, str(helper), desktop_file],
+            env=environment,
             capture_output=True,
             timeout=15,
             check=False,

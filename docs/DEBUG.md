@@ -23,6 +23,16 @@ Choosing an installed application on buttons 1–13 imports its icon without lau
 journalctl --user -u ulanzi-web.service -n 100 --no-pager
 ```
 
+For NixOS, inspect `ULANZI_DESKTOP_PYTHON` in both service environments and use
+the runtime in [INSTALL.md](INSTALL.md#nixos). Missing `gi` means the selected
+Python lacks PyGObject; missing namespaces require `GI_TYPELIB_PATH`; SVG
+decoding requires the librsvg loader. The same selector is used for icons and
+desktop activation. It tests available interpreters without launching an app.
+An explicit invalid override fails instead of silently choosing another Python.
+Wrappers may set their own Python paths; do not add `-I` or `-E`.
+For activation errors, also check the daemon's graphical-session environment
+and journal, not just the web service's environment.
+
 
 ## Applications Closing When Applying Configuration
 

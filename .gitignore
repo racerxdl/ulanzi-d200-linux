@@ -1,4 +1,5 @@
 .env
+.env.*
 .qwen/.env
 config.yaml
 config.yaml.backup
