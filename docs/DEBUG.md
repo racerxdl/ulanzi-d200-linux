@@ -23,7 +23,7 @@ Choosing an installed application on buttons 1–13 imports its icon without lau
 journalctl --user -u ulanzi-web.service -n 100 --no-pager
 ```
 
-For NixOS, inspect `ULANZI_DESKTOP_PYTHON` in both service environments and use
+For NixOS, inspect `ULANZI_GI_PYTHON` in both service environments and use
 the runtime in [INSTALL.md](INSTALL.md#nixos). Missing `gi` means the selected
 Python lacks PyGObject; missing namespaces require `GI_TYPELIB_PATH`; SVG
 decoding requires the librsvg loader. The same selector is used for icons and

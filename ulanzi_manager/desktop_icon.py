@@ -1,6 +1,6 @@
 """Resolve installed desktop icons with the native GTK stack, without launching.
 
-Run with the selected native Python. stdout is a transparent 196×196 PNG on success;
+Run with the graphical Python interpreter selected by ULANZI_GI_PYTHON. stdout is a single transparent 196×196 PNG on success;
 exit 3 with empty stdout means no icon. Other failures are described on stderr.
 Importing this module does not import GI or initialize a graphical display.
 """

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 - Linux system with USB support
 - `xdotool` for keyboard shortcuts (optional but recommended)
 - Running user systemd manager and `systemd-run` with `--expand-environment` support for application and command actions
@@ -25,44 +25,51 @@ sudo dnf install python3 python3-pip xdotool hidapi python3-gobject gtk3 librsvg
 sudo pacman -S python python-pip xdotool hidapi python-gobject gtk3 librsvg
 ```
 
-Installed-app launch and icon import select a Python with native GTK/GIO bindings rather than assuming `/usr/bin/python3` exists. Set `ULANZI_DESKTOP_PYTHON` in both service environments to override discovery. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
-
 ### NixOS
 
-Installing `pygobject3` in an unrelated Python environment is not enough: both
-services need the same wrapped Python, typelibs, icon themes and SVG loader.
-Merge this runtime configuration into your existing NixOS service definitions
-(it does not install or redefine their `ExecStart` commands):
+The repository provides a flake package for `x86_64-linux` and `aarch64-linux`.
+Add it as a flake input:
 
 ```nix
-{ pkgs, lib, ... }:
-let
-  nativePython = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
-  desktopPython = pkgs.writeShellScript "ulanzi-desktop-python" ''
-    export GI_TYPELIB_PATH="${lib.makeSearchPath "lib/girepository-1.0" (map lib.getLib [ pkgs.glib pkgs.gtk3 pkgs.gdk-pixbuf ])}''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
-    export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.glib pkgs.gtk3 pkgs.gdk-pixbuf ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    export GDK_PIXBUF_MODULE_FILE="${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-    export XDG_DATA_DIRS="${lib.makeSearchPath "share" [ pkgs.shared-mime-info pkgs.adwaita-icon-theme pkgs.hicolor-icon-theme pkgs.gsettings-desktop-schemas ]}:/run/current-system/sw/share:$HOME/.local/share:$HOME/.nix-profile/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
-    exec ${nativePython}/bin/python3 "$@"
-  '';
-in {
-  systemd.user.services.ulanzi-web.environment.ULANZI_DESKTOP_PYTHON = "${desktopPython}";
-  systemd.user.services.ulanzi-daemon.environment.ULANZI_DESKTOP_PYTHON = "${desktopPython}";
-}
+ulanzi.url = "github:racerxdl/ulanzi-d200-linux";
 ```
 
-For Home Manager services, use the same wrapper value in each unit's
-`Service.Environment` as `"ULANZI_DESKTOP_PYTHON=${desktopPython}"`.
-Keep `systemd-run` on the daemon's `PATH`. The graphical session must provide
-`DISPLAY`/`WAYLAND_DISPLAY`, `XAUTHORITY` when needed, and the user D-Bus session
-to the user manager; importing those variables in a terminal does not change
-an already running service. Restart both services after updating their
-environment. Use the wrapper path, not its underlying unwrapped interpreter.
+Then add the package and udev rule to the NixOS module where `inputs` is in
+scope:
 
-The [Nixpkgs introspection hook](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/libraries/gobject-introspection/setup-hook.sh)
-uses `GI_TYPELIB_PATH`; the [native SVG loader example](https://github.com/NixOS/nixpkgs/blob/master/pkgs/applications/audio/quodlibet/default.nix)
-uses librsvg's `GDK_PIXBUF_MODULE_FILE`.
+```nix
+environment.systemPackages = [
+  inputs.ulanzi.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
 
+services.udev.extraRules = builtins.readFile "${inputs.ulanzi}/99-ulanzi.rules";
+
+systemd.user.services.ulanzi-daemon = {
+  description = "Ulanzi D200 Manager Daemon";
+  wantedBy = [ "default.target" ];
+  serviceConfig = {
+    ExecStart = "${inputs.ulanzi.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/ulanzi-daemon %h/.config/ulanzi/config.yaml";
+    Restart = "on-failure";
+    RestartSec = "5s";
+  };
+};
+```
+
+Rebuild NixOS, reconnect the device, then run `ulanzi-web` from a user shell.
+The daemon service starts at user login, and **Save and apply** can restart it.
+The package sets its GTK helper interpreter; do not run `install.sh`, which
+creates a mutable virtual environment.
+
+Installed-app launch and icon import select a Python with native GTK/GIO bindings rather than assuming `/usr/bin/python3` exists. `ULANZI_GI_PYTHON` explicitly selects the interpreter; the flake sets it automatically. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
+
+Both helpers remove inherited Python path/home overrides, disable user-site
+packages with `-s`, and preserve paths established by the selected wrapper.
+Do not add `-I` or `-E`: those flags discard Nix wrapper module paths.
+Mutable/manual installations must provide PyGObject, `GI_TYPELIB_PATH`, and
+the librsvg `GDK_PIXBUF_MODULE_FILE` in both service environments.
+Desktop activation also requires the graphical-session environment:
+`DISPLAY`/`WAYLAND_DISPLAY`, `XAUTHORITY` when needed, and the user D-Bus session.
+Restart affected services after changing their environment.
 
 ## Step 2: Clone and Setup
 

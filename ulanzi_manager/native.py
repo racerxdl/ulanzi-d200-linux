@@ -22,12 +22,12 @@ def native_python():
     Ignore the application's Python overrides, but let a selected Nix Python
     wrapper establish its own module paths. -I/-E would discard those paths.
     XDG, display, D-Bus and GI library settings remain inherited.
-    ULANZI_DESKTOP_PYTHON explicitly selects an executable, not a shell command.
+    ULANZI_GI_PYTHON explicitly selects an executable, not a shell command.
     """
     environment = os.environ.copy()
     for key in ('PYTHONHOME', 'PYTHONPATH', 'PYTHONUSERBASE', 'PYTHONSTARTUP'):
         environment.pop(key, None)
-    configured = environment.get('ULANZI_DESKTOP_PYTHON')
+    configured = environment.get('ULANZI_GI_PYTHON')
     if configured:
         candidates = [configured]
     else:
@@ -57,7 +57,7 @@ def native_python():
         failures.append(f'{executable}: {result.stderr.strip()}')
     detail = '; '.join(failures) or 'no Python executable found'
     raise RuntimeError(
-        'No desktop-capable Python found. Set ULANZI_DESKTOP_PYTHON to a Python '
+        'No desktop-capable Python found. Set ULANZI_GI_PYTHON to a Python '
         'executable with PyGObject and GioUnix/GTK 3/GdkPixbuf; on NixOS use '
         'python3.withPackages (ps: [ ps.pygobject3 ]) and provide GI_TYPELIB_PATH. '
         + detail

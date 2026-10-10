@@ -20,7 +20,7 @@ A Linux application for managing the Ulanzi D200 StreamDeck device. Configure bu
 
 ## Quick Start
 
-Requires Python 3.9 or newer.
+Requires Python 3.10 or newer.
 
 1. **Install udev rule:**
    ```bash
@@ -78,7 +78,7 @@ Choose **Abrir aplicativo** in the button editor to search and select installed 
 Icon imports and desktop activation share a native Python selector. It checks
 `/run/current-system/sw/bin/python3`, `/usr/bin/python3`, Python executables on
 `PATH`, and the current interpreter for the required GTK/GIO bindings.
-`ULANZI_DESKTOP_PYTHON` explicitly selects an executable (not a shell command).
+`ULANZI_GI_PYTHON` explicitly selects an executable (not a shell command).
 Inherited Python path/home overrides are removed before execution, while
 the selected wrapper may establish its own module paths; user-site packages
 are disabled with `-s`. This preserves Nix Python wrappers instead of breaking

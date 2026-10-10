@@ -16,7 +16,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from ulanzi_manager.application_icons import import_application_icon
-from ulanzi_manager.native_python import native_python
+from ulanzi_manager.native import native_python
 
 
 class ApplicationIconTests(unittest.TestCase):
@@ -39,7 +39,10 @@ class ApplicationIconTests(unittest.TestCase):
             "HOME": str(self.root),
             "XDG_DATA_HOME": str(self.data),
             # Native decoders need the installed MIME database, not host app icons.
-            "XDG_DATA_DIRS": f"{self.root / 'system'}:/usr/local/share:/usr/share",
+            "XDG_DATA_DIRS": (
+                f"{self.root / 'system'}:"
+                + (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share")
+            ),
             "XDG_CONFIG_HOME": str(self.config),
             "XDG_CURRENT_DESKTOP": "",
             "GSETTINGS_BACKEND": "memory",
@@ -139,7 +142,7 @@ class ApplicationIconTests(unittest.TestCase):
             '<rect width="80" height="40" fill="#115395"/></svg>',
             encoding='utf-8',
         )
-        with patch.dict(os.environ, {'ULANZI_DESKTOP_PYTHON': str(wrapper)}):
+        with patch.dict(os.environ, {'ULANZI_GI_PYTHON': str(wrapper)}):
             filename = import_application_icon(self.desktop_file(source), self.icons)
         self.assert_icon(filename, (0, 49, 196, 147))
 

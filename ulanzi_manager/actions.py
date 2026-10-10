@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Any
 from abc import ABC, abstractmethod
 
-from ulanzi_manager.native_python import native_python
+from ulanzi_manager.native import native_python
 
 logger = logging.getLogger(__name__)
 

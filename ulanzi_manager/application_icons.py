@@ -16,7 +16,7 @@ from typing import Optional
 
 from PIL import Image, UnidentifiedImageError
 
-from ulanzi_manager.native_python import native_python
+from ulanzi_manager.native import native_python
 
 logger = logging.getLogger(__name__)
 

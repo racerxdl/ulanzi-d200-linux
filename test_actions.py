@@ -12,7 +12,7 @@ import time
 import unittest
 import uuid
 
-from ulanzi_manager.native_python import native_python
+from ulanzi_manager.native import native_python
 
 
 class IndependentLaunchTests(unittest.TestCase):
@@ -183,7 +183,7 @@ class IndependentLaunchTests(unittest.TestCase):
         )
         self._exercise(
             'AppAction', {'name': str(desktop)}, [],
-            {'ULANZI_DESKTOP_PYTHON': str(wrapper)},
+            {'ULANZI_GI_PYTHON': str(wrapper)},
         )
 
 
