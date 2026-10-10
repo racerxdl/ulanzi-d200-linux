@@ -51,6 +51,51 @@ class WebAppTest(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_large_static_image_uploads_are_resized_and_original_can_be_edited(self):
+        original = self.config_path.read_bytes()
+        data = io.BytesIO()
+        Image.new("RGB", (5120, 2160), "#1a78c4").save(data, format="PNG")
+        payload = {"data": base64.b64encode(data.getvalue()).decode("ascii")}
+        with self._http_server() as server:
+            status, icon = self._http_request(server, "POST", "/api/icons", payload)
+            self.assertEqual(201, status, icon)
+            with Image.open(self.icons / icon["filename"]) as rendered:
+                self.assertEqual((196, 196), rendered.size)
+                self.assertEqual((26, 120, 196), rendered.convert("RGB").getpixel((98, 98)))
+            status, mosaic = self._http_request(
+                server, "POST", "/api/mosaic", {**payload, "include_wide": True},
+            )
+            self.assertEqual(201, status, mosaic)
+            for index, filename in enumerate(mosaic["filenames"]):
+                with Image.open(self.icons / filename) as rendered:
+                    self.assertEqual((458, 196) if index == 13 else (196, 196), rendered.size)
+                    self.assertEqual((26, 120, 196), rendered.convert("RGB").getpixel((98, 98)))
+            with Image.open(self.icons / mosaic["background"]["source"]) as source:
+                self.assertEqual((5120, 2160), source.size)
+            status, edited = self._http_request(
+                server, "POST", "/api/mosaic",
+                {**mosaic["background"], "darkness": 50},
+            )
+            self.assertEqual(201, status, edited)
+            with Image.open(self.icons / edited["filenames"][0]) as rendered:
+                self.assertEqual((13, 60, 98), rendered.convert("RGB").getpixel((98, 98)))
+        self.assertEqual(original, self.config_path.read_bytes())
+
+    def test_static_pixel_limit_rejects_upload_without_writing_files(self):
+        data = io.BytesIO()
+        Image.new("1", (8001, 5000)).save(data, format="PNG")
+        payload = {"data": base64.b64encode(data.getvalue()).decode("ascii")}
+        original_icons = set(self.icons.iterdir())
+        original_config = self.config_path.read_bytes()
+        with self._http_server() as server:
+            for path in ("/api/icons", "/api/mosaic"):
+                with self.subTest(path=path):
+                    status, response = self._http_request(server, "POST", path, payload)
+                    self.assertEqual(400, status, response)
+                    self.assertIn("40 megapixels", response["error"])
+                    self.assertEqual(original_icons, set(self.icons.iterdir()))
+                    self.assertEqual(original_config, self.config_path.read_bytes())
+
     def test_first_run_http_config_can_be_read_and_saved_without_icons(self):
         from ulanzi_manager.config import ConfigParser
 

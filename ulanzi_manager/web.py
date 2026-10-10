@@ -38,6 +38,7 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 # Base64 expands image data by 4/3; reserve bounded space for JSON metadata.
 MAX_JSON_BYTES = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 64 * 1024
 MAX_IMAGE_DIMENSION = 4096
+MAX_STATIC_IMAGE_PIXELS = 40_000_000
 MAX_GIF_FRAMES = 300
 ALLOWED_ACTIONS = {"command", "app", "key", "obs"}
 ALLOWED_OBS_ACTIONS = {
@@ -755,8 +756,10 @@ class WebApp:
                 source.write(image_bytes)
                 source_path = Path(source.name)
             with Image.open(source_path) as image:
-                if max(image.size) > MAX_IMAGE_DIMENSION:
-                    raise ValidationError("A imagem não pode ultrapassar 4096 px")
+                if wide and max(image.size) > MAX_IMAGE_DIMENSION:
+                    raise ValidationError("O GIF não pode ultrapassar 4096 px")
+                if not wide and image.width * image.height > MAX_STATIC_IMAGE_PIXELS:
+                    raise ValidationError("A imagem não pode ultrapassar 40 megapixels")
                 if wide:
                     if image.format != "GIF" or not getattr(image, "is_animated", False):
                         raise ValidationError("O botão 14 requer um GIF animado")
@@ -945,8 +948,8 @@ class WebApp:
         canvas_size = (5 * 196, 3 * 196)
         try:
             with Image.open(io.BytesIO(image_bytes)) as image:
-                if max(image.size) > MAX_IMAGE_DIMENSION:
-                    raise ValidationError("A imagem não pode ultrapassar 4096 px")
+                if image.width * image.height > MAX_STATIC_IMAGE_PIXELS:
+                    raise ValidationError("A imagem não pode ultrapassar 40 megapixels")
                 if getattr(image, "is_animated", False):
                     raise ValidationError("O mosaico requer uma imagem estática")
                 if image.format not in {"PNG", "JPEG", "WEBP"}:

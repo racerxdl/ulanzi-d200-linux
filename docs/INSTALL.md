@@ -60,7 +60,16 @@ The daemon service starts at user login, and **Save and apply** can restart it.
 The package sets its GTK helper interpreter; do not run `install.sh`, which
 creates a mutable virtual environment.
 
-Installed-app launch and icon import use the graphical Python interpreter selected by `ULANZI_GI_PYTHON` (default `/usr/bin/python3`) with system GTK/GIO bindings, not the virtualenv interpreter. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
+Installed-app launch and icon import select a Python with native GTK/GIO bindings rather than assuming `/usr/bin/python3` exists. `ULANZI_GI_PYTHON` explicitly selects the interpreter; the flake sets it automatically. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
+
+Both helpers remove inherited Python path/home overrides, disable user-site
+packages with `-s`, and preserve paths established by the selected wrapper.
+Do not add `-I` or `-E`: those flags discard Nix wrapper module paths.
+Mutable/manual installations must provide PyGObject, `GI_TYPELIB_PATH`, and
+the librsvg `GDK_PIXBUF_MODULE_FILE` in both service environments.
+Desktop activation also requires the graphical-session environment:
+`DISPLAY`/`WAYLAND_DISPLAY`, `XAUTHORITY` when needed, and the user D-Bus session.
+Restart affected services after changing their environment.
 
 ## Step 2: Clone and Setup
 

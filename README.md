@@ -75,7 +75,18 @@ authorities; malformed or nonlocal Host headers are rejected.
 
 Choose **Abrir aplicativo** in the button editor to search and select installed desktop applications. The list reads visible Linux `.desktop` entries from XDG application directories and Flatpak/Snap exports, using localized names and honoring user overrides. Selecting an app stores its stable launcher path in `params.name`; the daemon opens it with a native GTK/GIO helper, preserving launcher arguments, file placeholders, and packaging-specific commands. On buttons 1–13, selection also imports the application's native icon as a transparent 196×196 PNG, resolving theme inheritance, exported icons, and absolute raster/SVG paths. The configured icon size and background are preserved. A missing icon leaves the current image unchanged, and button 14 retains its GIF or statistics when an app action is selected. Labels are not changed automatically. **Informar executável manualmente** retains the existing executable-name workflow. Reload the page to discover newly installed apps.
 
-The desktop helper waits for `launch_uris_async`/`launch_uris_finish` to complete before exiting, so a first press opens D-Bus-activated apps rather than merely starting their service. It uses the graphical Python interpreter selected by `ULANZI_GI_PYTHON` (default `/usr/bin/python3`) with system PyGObject, GDK 3, and GioUnix introspection (GLib 2.80+), not the virtualenv interpreter. The Nix package sets this interpreter. On Ubuntu/Debian the default bindings are supplied by `python3-gi`, `gir1.2-gtk-3.0`, and `gir1.2-glib-2.0`.
+Icon imports and desktop activation share a native Python selector. It checks
+`/run/current-system/sw/bin/python3`, `/usr/bin/python3`, Python executables on
+`PATH`, and the current interpreter for the required GTK/GIO bindings.
+`ULANZI_GI_PYTHON` explicitly selects an executable (not a shell command).
+Inherited Python path/home overrides are removed before execution, while
+the selected wrapper may establish its own module paths; user-site packages
+are disabled with `-s`. This preserves Nix Python wrappers instead of breaking
+them with `-I`. XDG, GI, display and D-Bus settings remain available.
+See [NixOS installation](docs/INSTALL.md#nixos) for the native runtime and
+service environment.
+
+The desktop helper waits for `launch_uris_async`/`launch_uris_finish` to complete before exiting, so a first press opens D-Bus-activated apps rather than merely starting their service. It uses the graphical launch context and does not retry or dispatch a second activation. Launch work runs in a separate process, keeping button polling and display updates responsive; activation failures reach the daemon journal. The selected Python needs PyGObject, GDK 3, and GioUnix introspection (GLib 2.80+). On Ubuntu/Debian these bindings are supplied by `python3-gi`, `gir1.2-gtk-3.0`, and `gir1.2-glib-2.0`.
 
 Application and command actions run in independent transient user-systemd scopes (`systemd-run --user --scope --collect`), so **Save and apply**, daemon recovery, and service shutdown do not close applications opened by a button. Scopes preserve the launch environment and working directory; commands still use `/bin/sh -c`, including shell variables and quoting, and desktop actions retain native GTK/GIO activation. These actions require a running user systemd manager and `systemd-run` with `--expand-environment` support. Startup failures are reported in the daemon journal; there is no unsafe direct-launch fallback.
 
@@ -183,6 +194,12 @@ Uploads retain an 8 MiB decoded/prepared image limit; the bounded JSON request
 limit separately accommodates base64 expansion. Composite icons are keyed by
 both input images' contents, so replacing a source or background under the
 same filename takes effect on the next save/apply.
+
+Static icon and background uploads accept up to 40 million pixels, including
+8K (7680×4320) images, instead of limiting either side to 4096 px. They are
+automatically fitted to the device's image sizes; background editing retains
+the original resolution. The 8 MiB file limit still applies. Animated GIFs
+retain the 4096 px per-side limit to bound frame decoding costs.
 
 Host CPU utilization is aggregated across all logical cores on a 0–100% scale, not a single core or a process's CPU column. `/proc/stat` guest counters are not added twice. RAM follows the htop 3.4 numeric used/total meter: `(MemTotal - MemFree - Buffers - Cached - SReclaimable + Shmem) / MemTotal`, rather than `MemTotal - MemAvailable`; see its [Linux accounting](https://github.com/htop-dev/htop/blob/3.4.1/linux/LinuxMachine.c) and [numeric memory meter](https://github.com/htop-dev/htop/blob/3.4.1/MemoryMeter.c). GPU utilization comes from Linux DRM `gpu_busy_percent`, or `nvidia-smi` when that sensor is absent. Device values are rounded to integer percentages. Collection and image updates use a separate 1.5-second timer, matching htop's configured `delay=15`; USB keepalive remains at 1 second, and GIF timing is unchanged. This aligns the target frequency, not the phase or the data snapshots of the two programs. Scheduler, processing, and USB latency can introduce small timing differences.
 In **CPU, RAM e GPU** mode, choose columns, rows, or a compact layout; adjust the value text from 18 to 48 px; and pick separate value and label colors for each of CPU, RAM, and GPU. Older layouts retain their previous common colors until you customize them individually. The preview uses example values, while the device shows live utilization. Settings persist with the active configuration and saved layout presets. Metrics are rendered over the static wide background, or black when no background is configured. Applying a background with the wide-display option enabled preserves the statistics mode.

@@ -12,6 +12,8 @@ import time
 import unittest
 import uuid
 
+from ulanzi_manager.native import native_python
+
 
 class IndependentLaunchTests(unittest.TestCase):
     @classmethod
@@ -84,7 +86,7 @@ class IndependentLaunchTests(unittest.TestCase):
         )
         self.fail(f'Application did not complete {path.name}: {journal.stdout}')
 
-    def _exercise(self, handler, params, expected_args):
+    def _exercise(self, handler, params, expected_args, extra_environment=None):
         token = "literal $HOME and quote's"
         code = (
             'import sys, time; from pathlib import Path; '
@@ -104,6 +106,7 @@ class IndependentLaunchTests(unittest.TestCase):
             'ACTION_READY': str(self.ready), 'ACTION_FINISH': str(self.finish),
             'ACTION_DONE': str(self.done), 'ACTION_TOKEN': token,
         }
+        environment.update(extra_environment or {})
         for key in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'DBUS_SESSION_BUS_ADDRESS'):
             if key in os.environ:
                 environment[key] = os.environ[key]
@@ -146,24 +149,42 @@ class IndependentLaunchTests(unittest.TestCase):
     def test_manual_application_survives_restart_with_spaces_in_path(self):
         self._exercise('AppAction', {'name': str(self.probe)}, [])
 
-    def test_desktop_application_survives_restart(self):
+    def test_wrapped_desktop_application_survives_restart(self):
+        try:
+            python, environment = native_python()
+        except RuntimeError as error:
+            self.skipTest(str(error))
         native = subprocess.run(
-            [os.environ.get('ULANZI_GI_PYTHON', '/usr/bin/python3'), '-c',
+            [*python, '-c',
              'import gi; gi.require_version("Gdk", "3.0"); '
-             'gi.require_version("GioUnix", "2.0"); '
              'from gi.repository import Gdk; Gdk.init_check([]); '
              'raise SystemExit(Gdk.Display.get_default() is None)'],
-            capture_output=True, timeout=10,
+            env=environment, capture_output=True, timeout=10,
         )
         if native.returncode:
-            self.skipTest('Native GTK/GioUnix bindings or graphical display unavailable')
+            self.skipTest('Graphical display unavailable')
+        module_path = subprocess.check_output(
+            [*python, '-c', 'import gi; from pathlib import Path; print(Path(gi.__file__).parent.parent)'],
+            env=environment, text=True,
+        ).strip()
+        wrapper = self.root / 'wrapped python'
+        wrapper.write_text(
+            '#!/bin/sh\n'
+            f'export PYTHONPATH={shlex.quote(module_path)}\n'
+            f'exec {shlex.quote(python[0])} -S "$@"\n',
+            encoding='utf-8',
+        )
+        wrapper.chmod(0o700)
         desktop = self.root / 'probe.desktop'
         desktop.write_text(
             '[Desktop Entry]\nType=Application\nName=Ulanzi lifecycle probe\n'
             f'Exec="{self.probe}" %U\nTerminal=false\n',
             encoding='utf-8',
         )
-        self._exercise('AppAction', {'name': str(desktop)}, [])
+        self._exercise(
+            'AppAction', {'name': str(desktop)}, [],
+            {'ULANZI_GI_PYTHON': str(wrapper)},
+        )
 
 
 if __name__ == '__main__':

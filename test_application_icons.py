@@ -6,6 +6,7 @@ only if its native dependencies are unavailable; no installed app is required.
 
 import hashlib
 import os
+import shlex
 import subprocess
 import unittest
 from pathlib import Path
@@ -15,22 +16,16 @@ from unittest.mock import patch
 from PIL import Image
 
 from ulanzi_manager.application_icons import import_application_icon
+from ulanzi_manager.native import native_python
 
 
 class ApplicationIconTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        probe = subprocess.run(
-            [os.environ.get("ULANZI_GI_PYTHON", "/usr/bin/python3"), "-c", (
-                "import gi; "
-                "gi.require_version('GioUnix', '2.0'); "
-                "gi.require_version('Gtk', '3.0'); "
-                "gi.require_version('GdkPixbuf', '2.0'); "
-                "from gi.repository import GioUnix, Gtk, GdkPixbuf"
-            )], capture_output=True, check=False,
-        )
-        if probe.returncode != 0:
-            raise unittest.SkipTest("Native PyGObject/GTK 3/GioUnix/GdkPixbuf unavailable")
+        try:
+            cls.python, cls.environment = native_python()
+        except RuntimeError as error:
+            raise unittest.SkipTest(str(error)) from error
 
     def setUp(self):
         temporary = TemporaryDirectory()
@@ -44,7 +39,10 @@ class ApplicationIconTests(unittest.TestCase):
             "HOME": str(self.root),
             "XDG_DATA_HOME": str(self.data),
             # Native decoders need the installed MIME database, not host app icons.
-            "XDG_DATA_DIRS": f"{self.root / 'system'}:/usr/local/share:/usr/share",
+            "XDG_DATA_DIRS": (
+                f"{self.root / 'system'}:"
+                + (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share")
+            ),
             "XDG_CONFIG_HOME": str(self.config),
             "XDG_CURRENT_DESKTOP": "",
             "GSETTINGS_BACKEND": "memory",
@@ -109,6 +107,44 @@ class ApplicationIconTests(unittest.TestCase):
         self.assertEqual({path.name for path in self.icons.iterdir()}, {first})
         source.write_bytes(b"The imported icon must remain independent of its source")
         self.assert_icon(first, (0, 49, 196, 147))
+
+    def test_python_environment_cannot_shadow_native_dependencies(self):
+        source = self.raster(self.root / "wide.png")
+        desktop = self.desktop_file(source)
+        shadow = self.root / "python-shadow"
+        shadow.mkdir()
+        (shadow / "gi.py").write_text(
+            "raise ModuleNotFoundError(\"No module named 'gi'\")\n", encoding="utf-8",
+        )
+        with patch.dict(os.environ, {
+            "PYTHONPATH": str(shadow),
+            "PYTHONHOME": str(self.root / "nonexistent-python"),
+        }):
+            filename = import_application_icon(desktop, self.icons)
+        self.assert_icon(filename, (0, 49, 196, 147))
+
+    def test_wrapped_python_keeps_its_own_module_paths_for_svg_import(self):
+        module_path = subprocess.check_output(
+            [*self.python, '-c', 'import gi; from pathlib import Path; print(Path(gi.__file__).parent.parent)'],
+            env=self.environment, text=True,
+        ).strip()
+        wrapper = self.root / 'wrapped python'
+        wrapper.write_text(
+            '#!/bin/sh\n'
+            f'export PYTHONPATH={shlex.quote(module_path)}\n'
+            f'exec {shlex.quote(self.python[0])} -S "$@"\n',
+            encoding='utf-8',
+        )
+        wrapper.chmod(0o700)
+        source = self.root / 'wrapped.svg'
+        source.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40">'
+            '<rect width="80" height="40" fill="#115395"/></svg>',
+            encoding='utf-8',
+        )
+        with patch.dict(os.environ, {'ULANZI_GI_PYTHON': str(wrapper)}):
+            filename = import_application_icon(self.desktop_file(source), self.icons)
+        self.assert_icon(filename, (0, 49, 196, 147))
 
     def test_absolute_svg_uses_native_loader_and_preserves_aspect(self):
         source = self.root / "portrait.svg"
