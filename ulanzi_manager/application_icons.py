@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 from PIL import Image, UnidentifiedImageError
+from ulanzi_manager.native import graphical_python
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,7 @@ def import_application_icon(desktop_file: str, icons_dir: Path) -> Optional[str]
     helper = Path(__file__).with_name("desktop_icon.py")
     try:
         result = subprocess.run(
-            ["/usr/bin/python3", str(helper), desktop_file],
+            [graphical_python(), str(helper), desktop_file],
             capture_output=True,
             timeout=15,
             check=False,

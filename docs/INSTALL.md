@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 - Linux system with USB support
 - `xdotool` for keyboard shortcuts (optional but recommended)
 - Running user systemd manager and `systemd-run` with `--expand-environment` support for application and command actions
@@ -25,7 +25,42 @@ sudo dnf install python3 python3-pip xdotool hidapi python3-gobject gtk3 librsvg
 sudo pacman -S python python-pip xdotool hidapi python-gobject gtk3 librsvg
 ```
 
-Installed-app launch and icon import use `/usr/bin/python3` with system GTK/GIO bindings, not the virtualenv interpreter. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
+### NixOS
+
+The repository provides a flake package for `x86_64-linux` and `aarch64-linux`.
+Add it as a flake input:
+
+```nix
+ulanzi.url = "github:racerxdl/ulanzi-d200-linux";
+```
+
+Then add the package and udev rule to the NixOS module where `inputs` is in
+scope:
+
+```nix
+environment.systemPackages = [
+  inputs.ulanzi.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+
+services.udev.extraRules = builtins.readFile "${inputs.ulanzi}/99-ulanzi.rules";
+
+systemd.user.services.ulanzi-daemon = {
+  description = "Ulanzi D200 Manager Daemon";
+  wantedBy = [ "default.target" ];
+  serviceConfig = {
+    ExecStart = "${inputs.ulanzi.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/ulanzi-daemon %h/.config/ulanzi/config.yaml";
+    Restart = "on-failure";
+    RestartSec = "5s";
+  };
+};
+```
+
+Rebuild NixOS, reconnect the device, then run `ulanzi-web` from a user shell.
+The daemon service starts at user login, and **Save and apply** can restart it.
+The package sets its GTK helper interpreter; do not run `install.sh`, which
+creates a mutable virtual environment.
+
+Installed-app launch and icon import use the graphical Python interpreter selected by `ULANZI_GI_PYTHON` (default `/usr/bin/python3`) with system GTK/GIO bindings, not the virtualenv interpreter. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
 
 ## Step 2: Clone and Setup
 

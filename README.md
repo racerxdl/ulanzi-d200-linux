@@ -20,7 +20,7 @@ A Linux application for managing the Ulanzi D200 StreamDeck device. Configure bu
 
 ## Quick Start
 
-Requires Python 3.9 or newer.
+Requires Python 3.10 or newer.
 
 1. **Install udev rule:**
    ```bash
@@ -75,7 +75,7 @@ authorities; malformed or nonlocal Host headers are rejected.
 
 Choose **Abrir aplicativo** in the button editor to search and select installed desktop applications. The list reads visible Linux `.desktop` entries from XDG application directories and Flatpak/Snap exports, using localized names and honoring user overrides. Selecting an app stores its stable launcher path in `params.name`; the daemon opens it with a native GTK/GIO helper, preserving launcher arguments, file placeholders, and packaging-specific commands. On buttons 1–13, selection also imports the application's native icon as a transparent 196×196 PNG, resolving theme inheritance, exported icons, and absolute raster/SVG paths. The configured icon size and background are preserved. A missing icon leaves the current image unchanged, and button 14 retains its GIF or statistics when an app action is selected. Labels are not changed automatically. **Informar executável manualmente** retains the existing executable-name workflow. Reload the page to discover newly installed apps.
 
-The desktop helper waits for `launch_uris_async`/`launch_uris_finish` to complete before exiting, so a first press opens D-Bus-activated apps rather than merely starting their service. It uses the graphical launch context and does not retry or dispatch a second activation. Launch work runs in a separate process, keeping button polling and display updates responsive; activation failures reach the daemon journal. The helper uses `/usr/bin/python3` with system PyGObject, GDK 3, and GioUnix introspection (GLib 2.80+), not the virtualenv interpreter. On Ubuntu/Debian these bindings are supplied by `python3-gi`, `gir1.2-gtk-3.0`, and `gir1.2-glib-2.0`.
+The desktop helper waits for `launch_uris_async`/`launch_uris_finish` to complete before exiting, so a first press opens D-Bus-activated apps rather than merely starting their service. It uses the graphical Python interpreter selected by `ULANZI_GI_PYTHON` (default `/usr/bin/python3`) with system PyGObject, GDK 3, and GioUnix introspection (GLib 2.80+), not the virtualenv interpreter. The Nix package sets this interpreter. On Ubuntu/Debian the default bindings are supplied by `python3-gi`, `gir1.2-gtk-3.0`, and `gir1.2-glib-2.0`.
 
 Application and command actions run in independent transient user-systemd scopes (`systemd-run --user --scope --collect`), so **Save and apply**, daemon recovery, and service shutdown do not close applications opened by a button. Scopes preserve the launch environment and working directory; commands still use `/bin/sh -c`, including shell variables and quoting, and desktop actions retain native GTK/GIO activation. These actions require a running user systemd manager and `systemd-run` with `--expand-environment` support. Startup failures are reported in the daemon journal; there is no unsafe direct-launch fallback.
 

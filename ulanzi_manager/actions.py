@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 from abc import ABC, abstractmethod
+from ulanzi_manager.native import graphical_python
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,7 @@ class AppAction(ActionHandler):
             app_path = Path(app_name)
             desktop = app_path.is_absolute() and app_path.suffix == '.desktop'
             command = (
-                ['/usr/bin/python3', str(Path(__file__).with_name('desktop_launcher.py')), app_name]
+                [graphical_python(), str(Path(__file__).with_name('desktop_launcher.py')), app_name]
                 if desktop else [app_name]
             )
             _launch_independent(command, desktop=desktop)
