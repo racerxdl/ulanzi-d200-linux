@@ -248,7 +248,7 @@ class UlanziDaemon:
 
     def _init_obs_client(self):
         """Initialize OBS WebSocket client"""
-        if not any(button.action_type == 'obs' for button in self.config.buttons):
+        if not any(button.action_enabled and button.action_type == 'obs' for button in self.config.buttons):
             logger.info("No OBS actions configured; skipping OBS connection")
             return
 

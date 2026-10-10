@@ -214,6 +214,10 @@ function appendHistoryPreview(readout, colors) {
 
 function renderMetricsPreview(container, button) {
   container.replaceChildren();
+  if (!button.enabled) {
+    appendPreviewImage(container, button.background_tile, "metrics-background");
+    return;
+  }
   const background = button.background_tile || button.image;
   if (String(background || "").toLowerCase().endsWith(".png")) {
     appendPreviewImage(container, background, "metrics-background");
@@ -262,7 +266,10 @@ function renderMiniDeck(container, config) {
     item.className = "mini-button";
     if (index === 13) item.classList.add("wide");
     if (!button.enabled) item.classList.add("disabled");
-    if (button.enabled && index === 13 && button.display_mode === "stats") {
+    item.classList.toggle("has-background", Boolean(button.background_tile));
+    if (!button.enabled) {
+      appendPreviewImage(item, button.background_tile, "preview-background");
+    } else if (index === 13 && button.display_mode === "stats") {
       renderMetricsPreview(item, button);
     } else if (button.enabled) {
       if (index !== 13 || button.display_mode !== "background") {
@@ -293,10 +300,10 @@ function renderBackgroundOverview() {
   const wide = document.createElement("div");
   wide.className = "background-wide-slot";
   const wideButton = state.config.buttons[13];
-  if (wideButton.enabled && ["background", "stats"].includes(wideButton.display_mode)) {
+  if (wideButton.background_tile || (wideButton.enabled && ["background", "stats"].includes(wideButton.display_mode))) {
     appendPreviewImage(
       wide,
-      wideButton.background_tile || wideButton.icon_source || wideButton.image,
+      wideButton.background_tile || (wideButton.enabled ? wideButton.icon_source || wideButton.image : ""),
       "preview-background",
     );
   } else {
@@ -473,11 +480,14 @@ function renderGrid() {
     card.draggable = index !== 13;
     card.classList.toggle("selected", index === state.selected);
     card.classList.toggle("disabled", !button.enabled);
+    card.classList.toggle("has-background", Boolean(button.background_tile));
     card.setAttribute("aria-label", `Editar ou mover botão ${index + 1}`);
 
     const iconSource = button.icon_source || button.image;
     const statsDisplay = index === 13 && button.display_mode === "stats";
-    if (button.enabled && statsDisplay) {
+    if (!button.enabled && button.background_tile) {
+      appendPreviewImage(card, button.background_tile, "background-layer");
+    } else if (button.enabled && statsDisplay) {
       renderMetricsPreview(card, button);
     } else if (button.enabled && iconSource) {
       if ((index !== 13 || button.display_mode !== "background") && button.background_tile) {
@@ -493,6 +503,8 @@ function renderGrid() {
       setForegroundSize(image, button, index === 13, index === 13 ? 100 : (button.icon_scale || 100));
       image.alt = "";
       card.append(image);
+    } else if (button.background_tile) {
+      appendPreviewImage(card, button.background_tile, "background-layer");
     } else {
       const fallback = document.createElement("span");
       fallback.className = "fallback";
@@ -503,7 +515,7 @@ function renderGrid() {
     const number = document.createElement("span");
     number.className = "button-number";
     number.textContent = index + 1;
-    if (!statsDisplay || button.metrics_style.view === "text") card.append(number);
+    if (!button.enabled || !statsDisplay || button.metrics_style.view === "text") card.append(number);
 
     if (button.enabled && state.config.label_style.ShowTitle && button.label) {
       const label = document.createElement("span");
@@ -574,24 +586,30 @@ function refreshIconOptions(selectedName) {
 
 function renderIconPreview(name, scale = 100, backgroundName = "") {
   elements.iconPreview.replaceChildren();
-  if (!name) {
-    const text = document.createElement("span");
-    text.textContent = "Sem ícone";
-    elements.iconPreview.append(text);
-    return;
-  }
-  if (backgroundName) {
+  const button = state.config.buttons[state.selected];
+  const wide = state.selected === 13;
+  elements.iconPreview.classList.toggle("disabled", !button.enabled);
+  elements.iconPreview.classList.toggle("has-background", Boolean(backgroundName));
+  if (backgroundName && (!button.enabled || !wide || button.display_mode !== "background")) {
     const background = document.createElement("img");
     background.className = "background-layer";
     background.src = iconUrl(backgroundName);
     background.alt = "";
     elements.iconPreview.append(background);
   }
+  if (!button.enabled || !name) {
+    if (!backgroundName) {
+      const text = document.createElement("span");
+      text.textContent = "Sem ícone";
+      elements.iconPreview.append(text);
+    }
+    return;
+  }
   const image = document.createElement("img");
   image.className = "logo-layer";
   image.src = iconUrl(name);
   image.style.setProperty("--logo-scale", `${scale}%`);
-  setForegroundSize(image, state.config.buttons[state.selected], state.selected === 13, scale);
+  setForegroundSize(image, button, wide, scale);
   image.alt = "Prévia do ícone";
   elements.iconPreview.append(image);
 }
@@ -890,7 +908,7 @@ function renderEditor() {
     });
     renderMetricsPreview(elements.metricsStylePreview, button);
   }
-  elements.iconRow.hidden = statsDisplay || backgroundDisplay;
+  elements.iconRow.hidden = statsDisplay || (backgroundDisplay && button.enabled);
   elements.iconPreview.classList.toggle("wide-display-preview", wide);
   elements.iconRow.classList.toggle("wide-icon-row", wide);
   elements.editorBody.classList.toggle("inactive", !button.enabled);
@@ -1260,11 +1278,12 @@ function applyMosaic() {
   if (result.background.include_wide && result.filenames[13]) {
     const wide = state.config.buttons[13];
     wide.background_tile = result.filenames[13];
-    wide.enabled = true;
-    wide.image = result.filenames[13];
-    wide.icon_source = result.filenames[13];
-    wide.icon_scale = 100;
-    if (wide.display_mode !== "stats") wide.display_mode = "background";
+    if (wide.enabled) {
+      wide.image = result.filenames[13];
+      wide.icon_source = result.filenames[13];
+      wide.icon_scale = 100;
+      if (wide.display_mode !== "stats") wide.display_mode = "background";
+    }
   }
   state.iconVersion = Date.now();
   markDirty();

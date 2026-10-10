@@ -125,7 +125,7 @@ class WebApp:
                 continue
 
             image = item.get("image") or ""
-            icon_source = item.get("icon_source") or image
+            icon_source = item.get("icon_source", image) or ""
             try:
                 icon_scale = max(25, min(100, int(item.get("icon_scale", 100))))
             except (TypeError, ValueError):
@@ -137,7 +137,7 @@ class WebApp:
                 )
             buttons.append({
                 "index": index,
-                "enabled": True,
+                "enabled": bool(item.get("enabled", True)),
                 "label": str(item.get("label") or ""),
                 "image": Path(image).name if image else "",
                 "icon_source": Path(icon_source).name if icon_source else "",
@@ -158,6 +158,12 @@ class WebApp:
                 "metrics_style": parse_metrics_style(item.get("metrics_style")),
             })
 
+        background = (
+            self._background_settings(raw["background"])
+            if raw.get("background") is not None else self._recover_mosaic_source(buttons)
+        )
+        self._fill_background_tiles(buttons, background)
+
         label_style = raw.get("label_style") or {}
         obs = raw.get("obs") or {}
         return {
@@ -176,10 +182,7 @@ class WebApp:
                 "password": obs.get("password"),
             },
             "buttons": buttons,
-            "background": (
-                self._background_settings(raw["background"])
-                if raw.get("background") is not None else self._recover_mosaic_source(buttons)
-            ),
+            "background": background,
             "icons": self.list_icons(),
         }
 
@@ -527,6 +530,21 @@ class WebApp:
             if candidate and candidate.exists():
                 candidate.unlink()
 
+    def _fill_background_tiles(self, buttons, background):
+        """Restore missing mosaic faces without enabling their foreground or action."""
+        if background is None:
+            return
+        count = BUTTON_COUNT if background["include_wide"] else WIDE_DISPLAY_INDEX
+        if not any(
+            isinstance(button, dict) and not button.get("background_tile")
+            for button in buttons[:count]
+        ):
+            return
+        rendered = self.upload_mosaic(background)
+        for button, filename in zip(buttons[:count], rendered["filenames"]):
+            if isinstance(button, dict) and not button.get("background_tile"):
+                button["background_tile"] = filename
+
     def _build_document(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         background = payload.get("background")
         if background is not None:
@@ -558,12 +576,39 @@ class WebApp:
         input_buttons = payload.get("buttons")
         if not isinstance(input_buttons, list) or len(input_buttons) != BUTTON_COUNT:
             raise ValidationError("A configuração deve conter exatamente 14 botões")
+        input_buttons = [
+            dict(button) if isinstance(button, dict) else button for button in input_buttons
+        ]
+        self._fill_background_tiles(input_buttons, background)
 
         buttons = []
         available_icons = set(self._available_icons())
         for index, button in enumerate(input_buttons):
-            if not isinstance(button, dict) or not button.get("enabled"):
+            if not isinstance(button, dict):
                 buttons.append(None)
+                continue
+            if not button.get("enabled"):
+                background_name = Path(str(button.get("background_tile") or "")).name
+                if not background_name:
+                    buttons.append(None)
+                    continue
+                if background_name not in available_icons or not background_name.endswith(".png"):
+                    raise ValidationError("Botão {}: fundo do mosaico inválido".format(index + 1))
+                source_name = Path(str(button.get("icon_source") or "")).name
+                buttons.append({
+                    "enabled": False,
+                    "image": "./icons/{}".format(background_name),
+                    "background_tile": "./icons/{}".format(background_name),
+                    "icon_source": "./icons/{}".format(source_name) if source_name else "",
+                    "icon_scale": button.get("icon_scale", 100),
+                    "content_margin": button.get("content_margin", 0),
+                    "label": str(button.get("label") or ""),
+                    "action": str(button.get("action") or "command"),
+                    "params": button.get("params") or {},
+                    "action_enabled": False,
+                    "display_mode": str(button.get("display_mode") or "background"),
+                    "metrics_style": button.get("metrics_style") or {},
+                })
                 continue
 
             try:
