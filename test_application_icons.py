@@ -21,7 +21,7 @@ class ApplicationIconTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         probe = subprocess.run(
-            ["/usr/bin/python3", "-c", (
+            [os.environ.get("ULANZI_GI_PYTHON", "/usr/bin/python3"), "-c", (
                 "import gi; "
                 "gi.require_version('GioUnix', '2.0'); "
                 "gi.require_version('Gtk', '3.0'); "

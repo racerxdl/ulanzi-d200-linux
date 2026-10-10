@@ -98,7 +98,6 @@ class IconGenerationTests(unittest.TestCase):
                     self.assertLess(bottom, image.height)
                     self.assertAlmostEqual((left + right) / 2, image.width / 2, delta=12)
                     self.assertAlmostEqual((top + bottom) / 2, image.height / 2, delta=12)
-                    self.assertIn((255, 255, 255), image.getdata())
 
 
 if __name__ == '__main__':

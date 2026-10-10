@@ -148,7 +148,7 @@ class IndependentLaunchTests(unittest.TestCase):
 
     def test_desktop_application_survives_restart(self):
         native = subprocess.run(
-            ['/usr/bin/python3', '-c',
+            [os.environ.get('ULANZI_GI_PYTHON', '/usr/bin/python3'), '-c',
              'import gi; gi.require_version("Gdk", "3.0"); '
              'gi.require_version("GioUnix", "2.0"); '
              'from gi.repository import Gdk; Gdk.init_check([]); '
