@@ -13,7 +13,7 @@ setup(
         "hidapi==0.15.0",
         "pyyaml==6.0.1",
         "obsws-python==1.8.0",
-        "pillow==12.3.0",
+        "pillow==13.0.0",
     ],
     entry_points={
         "console_scripts": [
@@ -22,5 +22,5 @@ setup(
             "ulanzi-web=ulanzi_manager.web:main",
         ],
     },
-    python_requires=">=3.10",
+    python_requires=">=3.11",
 )

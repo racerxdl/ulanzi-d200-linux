@@ -20,7 +20,7 @@ A Linux application for managing the Ulanzi D200 StreamDeck device. Configure bu
 
 ## Quick Start
 
-Requires Python 3.10 or newer.
+Requires Python 3.11 or newer.
 
 1. **Install udev rule:**
    ```bash
