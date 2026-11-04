@@ -319,8 +319,12 @@ class UlanziDaemon:
         self._send_stats_frame(frame)
 
     def _send_stats_frame(self, frame):
+        # Alternate file names so the firmware never overwrites the image it is
+        # currently displaying; reusing one name left the wide display dark.
+        self._stats_frame_slot = not getattr(self, '_stats_frame_slot', False)
+        name = 'stats-a.png' if self._stats_frame_slot else 'stats-b.png'
         self.device.set_buttons({13: {
-            'image_data': frame, 'image_name': 'stats-background.png',
+            'image_data': frame, 'image_name': name,
             'label': '', 'state': 0,
         }}, partial=True, cache=False)
 
