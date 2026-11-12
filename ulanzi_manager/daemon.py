@@ -324,8 +324,13 @@ class UlanziDaemon:
         self._send_stats_frame(frame)
 
     def _send_stats_frame(self, frame):
+        # The D200X firmware does not redraw the wide display when the icon
+        # path is unchanged, so alternate between two names: the screen
+        # updates every frame and the device stores at most two files.
+        self._stats_frame_parity = not getattr(self, '_stats_frame_parity', False)
+        name = 'stats-a.png' if self._stats_frame_parity else 'stats-b.png'
         self.device.set_buttons({13: {
-            'image_data': frame, 'image_name': 'stats-background.png',
+            'image_data': frame, 'image_name': name,
             'label': '', 'state': 0,
         }}, partial=True, cache=False)
 
