@@ -14,6 +14,7 @@ from PIL import Image, ImageSequence, ImageDraw, ImageFont, ImageOps
 from ulanzi_manager.device import UlanziDevice, ButtonPress
 from ulanzi_manager.config import ConfigParser, Config, METRICS_FONT_FILES, parse_content_margin
 from ulanzi_manager.actions import ActionExecutor
+from ulanzi_manager import controls as extra_controls
 from ulanzi_manager.metrics import SystemMetrics
 
 # Setup logging
@@ -89,6 +90,9 @@ class UlanziDaemon:
     def __init__(self, config_path: str):
         """Initialize daemon"""
         self.config_path = config_path
+        self.controls = extra_controls.ExtraControls(
+            Path(config_path).parent / 'controls.yaml'
+        )
         self.config: Optional[Config] = None
         self.device: Optional[UlanziDevice] = None
         self.executor: Optional[ActionExecutor] = None
@@ -114,6 +118,7 @@ class UlanziDaemon:
         try:
             # Load configuration
             ConfigParser.ensure_default(self.config_path)
+            extra_controls.ensure_default(self.controls.path)
             self.config = ConfigParser.load(self.config_path)
 
             # Validate configuration
@@ -534,8 +539,16 @@ class UlanziDaemon:
 
     def _on_button_press(self, button: ButtonPress):
         """Handle a button event and execute once when the button is pressed."""
-        event = "pressed" if button.pressed else "released"
+        if button.rotation:
+            event = "clockwise" if button.rotation > 0 else "counterclockwise"
+        else:
+            event = "pressed" if button.pressed else "released"
         logger.info(f"Button {button.index} {event} (state={button.state})")
+        logger.debug(f"Button {button.index} raw={button.raw.hex(' ')}")
+
+        if button.index in extra_controls.CONTROL_INDEX:
+            self._on_extra_control(button.index, event)
+            return
         if not button.pressed:
             return
 
@@ -560,6 +573,21 @@ class UlanziDaemon:
                 button_config.action_type,
                 button_config.action_params
             )
+
+    def _on_extra_control(self, index: int, event: str):
+        """Run the controls.yaml action for a D200X knob or physical button."""
+        if event == "released":
+            return
+        if event == "pressed":
+            event = "press"
+        resolved = self.controls.resolve(index, event)
+        if not resolved:
+            logger.info(f"Control {index} {event} has no action configured")
+            return
+        action_type, params = resolved
+        logger.info(f"Executing control action: {action_type} ({index} {event})")
+        if self.executor:
+            self.executor.execute(action_type, params)
 
 
 def main():

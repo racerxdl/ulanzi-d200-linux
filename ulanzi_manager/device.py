@@ -48,6 +48,8 @@ class ButtonPress:
     index: int
     pressed: bool
     state: int
+    raw: bytes = b''
+    rotation: int = 0  # D200X knobs: +1 clockwise, -1 counterclockwise
 
 
 class UlanziDevice:
@@ -149,8 +151,14 @@ class UlanziDevice:
         state = button_data[0]
         index = button_data[1]
         pressed = button_data[3] == 0x01
+        # D200X knob turns report 0x03 (clockwise) or 0x02 (counterclockwise)
+        # in the byte that holds 0x01/0x00 for press/release.
+        rotation = {0x03: 1, 0x02: -1}.get(button_data[3], 0)
 
-        button_press = ButtonPress(index=index, pressed=pressed, state=state)
+        button_press = ButtonPress(
+            index=index, pressed=pressed, state=state,
+            raw=bytes(data[2:20]), rotation=rotation,
+        )
         if self._button_callback:
             self._button_callback(button_press)
         return button_press
