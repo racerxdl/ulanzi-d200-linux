@@ -175,6 +175,48 @@ Missing, malformed, or negative synchronization replies fail startup instead of 
 
 **Action Types:** `command`, `app`, `key`, `obs` (scenes, sources, recording, streaming)
 
+`key` actions use `ydotool` when it is installed, which also works on Wayland
+(`sudo apt install ydotool`; the package's `ydotool.service` user unit
+provides the daemon at `$XDG_RUNTIME_DIR/.ydotool_socket`). Without it they
+fall back to `xdotool` (X11 only). Combinations such as `ctrl+shift+tab`,
+`super`, `print`, `alt+f4` and single letters or digits are supported.
+
+### Ulanzi D200X
+
+The D200X reports the same USB ID (`2207:0019`) and protocol, with three
+extra controls on top of the 14 display keys:
+
+| Control | Index | Events |
+|---------|-------|--------|
+| Physical buttons (no display) | 15, 16 | press / release |
+| Knobs (left, middle, right) | 17, 18, 19 | turn clockwise, turn counterclockwise, press |
+
+A knob turn arrives on the button report with `0x03` (clockwise) or `0x02`
+(counterclockwise) in the byte that holds `0x01`/`0x00` for press/release.
+
+Because the web UI rewrites `config.yaml` on every save, these controls live
+in `controls.yaml` next to it. The daemon creates a commented default on first
+start (left knob: output volume and mute via `wpctl`; middle knob: microphone)
+and reloads the file whenever it changes:
+
+```yaml
+knobs:
+  left:
+    clockwise: {action: command, params: {cmd: "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+"}}
+    counterclockwise: {action: command, params: {cmd: "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"}}
+    press: {action: command, params: {cmd: "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"}}
+  right:
+    clockwise: {action: key, params: {keys: "ctrl+tab"}}
+    counterclockwise: {action: key, params: {keys: "ctrl+shift+tab"}}
+buttons:
+  first: {action: command, params: {cmd: "loginctl lock-session"}}
+  second: {action: key, params: {keys: "print"}}
+```
+
+The D200X firmware only redraws the wide display when the partial update
+names a different icon than the one on screen, so statistics frames alternate
+between two file names.
+
 ## Commands
 
 | Task | Command |

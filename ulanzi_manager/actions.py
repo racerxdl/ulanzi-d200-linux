@@ -1,5 +1,7 @@
 """Action handlers for button presses"""
 
+import os
+import shutil
 import subprocess
 import logging
 from pathlib import Path
@@ -75,8 +77,43 @@ class AppAction(ActionHandler):
             logger.error(f"Failed to launch application: {e}")
 
 
+# Linux input-event codes (linux/input-event-codes.h) for ydotool on Wayland.
+_YDOTOOL_KEYCODES = {
+    'ctrl': 29, 'control': 29, 'shift': 42, 'alt': 56,
+    'super': 125, 'meta': 125, 'win': 125,
+    'esc': 1, 'escape': 1, 'tab': 15, 'enter': 28, 'return': 28,
+    'space': 57, 'backspace': 14, 'delete': 111, 'print': 99,
+    'home': 102, 'end': 107, 'pageup': 104, 'pagedown': 109,
+    'up': 103, 'down': 108, 'left': 105, 'right': 106,
+    'minus': 12, 'equal': 13, 'plus': 13,
+    **{c: code for c, code in zip('qwertyuiop', range(16, 26))},
+    **{c: code for c, code in zip('asdfghjkl', range(30, 39))},
+    **{c: code for c, code in zip('zxcvbnm', range(44, 51))},
+    **{str(d): d + 1 for d in range(1, 10)}, '0': 11,
+    **{f'f{n}': 58 + n for n in range(1, 11)}, 'f11': 87, 'f12': 88,
+}
+
+
+def ydotool_sequence(keys: str) -> list:
+    """Translate 'ctrl+shift+tab' into ydotool press/release arguments."""
+    names = [name.strip().lower() for name in keys.split('+') if name.strip()]
+    if not names:
+        raise ValueError("empty key combination")
+    try:
+        codes = [_YDOTOOL_KEYCODES[name] for name in names]
+    except KeyError as error:
+        raise ValueError(f"unsupported key for ydotool: {error.args[0]}") from None
+    return [f'{code}:1' for code in codes] + [f'{code}:0' for code in reversed(codes)]
+
+
+def ydotool_socket() -> str:
+    """Socket used by the ydotoold user service (see systemd/ydotoold.service)."""
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+    return os.environ.get('YDOTOOL_SOCKET') or f'{runtime_dir}/.ydotool_socket'
+
+
 class KeyAction(ActionHandler):
-    """Simulate keyboard input"""
+    """Simulate keyboard input: ydotool (works on Wayland), else xdotool (X11)."""
 
     def execute(self, params: Dict[str, Any]):
         """Simulate keyboard input"""
@@ -86,13 +123,23 @@ class KeyAction(ActionHandler):
             return
 
         try:
-            # Try xdotool first (most common on Linux)
-            subprocess.run(['xdotool', 'key', keys], check=True, capture_output=True)
+            if shutil.which('ydotool'):
+                env = {**os.environ, 'YDOTOOL_SOCKET': ydotool_socket()}
+                subprocess.run(
+                    ['ydotool', 'key', *ydotool_sequence(keys)],
+                    check=True, capture_output=True, env=env, timeout=5,
+                )
+            else:
+                subprocess.run(['xdotool', 'key', keys], check=True, capture_output=True)
             logger.info(f"Sent keys: {keys}")
         except FileNotFoundError:
-            logger.error("xdotool not found. Install it with: sudo apt install xdotool")
+            logger.error(
+                "Neither ydotool nor xdotool found. On Wayland: sudo apt install ydotool"
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to send keys {keys!r}: {e.stderr.decode(errors='replace').strip()}")
         except Exception as e:
-            logger.error(f"Failed to send keys: {e}")
+            logger.error(f"Failed to send keys {keys!r}: {e}")
 
 
 class OBSAction(ActionHandler):
