@@ -33,7 +33,7 @@ DEFAULT_CONTROLS = """\
 # Cada ação usa os mesmos tipos das teclas:
 #   action: command  -> params: {cmd: "comando de shell"}
 #   action: app      -> params: {name: "firefox"}
-#   action: key      -> params: {keys: "ctrl+alt+t"}   (precisa de xdotool)
+#   action: key      -> params: {keys: "ctrl+alt+t"}   (via ydotool no Wayland)
 #   action: obs      -> params: {action: toggle_recording}
 # Para desativar um controle, apague a linha ou deixe-a comentada.
 
