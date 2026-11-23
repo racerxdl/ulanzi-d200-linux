@@ -181,6 +181,18 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual([], ConfigParser.validate(loaded))
         self.assertEqual(62, loaded.brightness)
 
+    def test_http_serves_translation_script_before_app_script(self):
+        self.app = WebApp(self.config_path)
+        with self._http_server() as server:
+            status, page = self._http_request(server, "GET", "/")
+            self.assertEqual(200, status)
+            page = page.decode("utf-8")
+            self.assertIn('id="languageSelect"', page)
+            self.assertLess(page.index('src="/i18n.js"'), page.index('src="/app.js"'))
+            status, script = self._http_request(server, "GET", "/i18n.js")
+            self.assertEqual(200, status)
+            self.assertIn(b"window.i18n", script)
+
     def test_web_start_preserves_existing_config_comments_and_values(self):
         original = b"# Keep this comment\n" + self.config_path.read_bytes()
         self.config_path.write_bytes(original)

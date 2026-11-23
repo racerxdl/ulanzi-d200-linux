@@ -13,6 +13,7 @@
       <h1>Ulanzi D200</h1>
     </div>
     <div class="header-actions">
+      <select id="languageSelect" class="language-select" aria-label="Idioma / Language"></select>
       <div class="status-group" aria-live="polite">
         <span id="deviceStatus" class="status"><i></i>Verificando dispositivo</span>
         <span id="serviceStatus" class="status"><i></i>Verificando serviço</span>
@@ -191,7 +192,7 @@
             </label>
             <div class="metrics-fonts">
               <label class="field">
-                <span>Fonte</span>
+                <span data-i18n-context="font">Fonte</span>
                 <select id="metricsFontFamily">
                   <option value="sans">Sem serifa</option>
                   <option value="mono">Monoespaçada</option>
@@ -319,6 +320,7 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/i18n.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>
