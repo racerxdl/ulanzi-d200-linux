@@ -1206,8 +1206,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._send_file(self.app.icons_dir / name, content_type)
             elif path in {"/", "/index.html"}:
                 self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
-            elif path == "/app.js":
-                self._send_file(STATIC_DIR / "app.js", "text/javascript; charset=utf-8")
+            elif path in {"/app.js", "/i18n.js"}:
+                self._send_file(STATIC_DIR / path.lstrip("/"), "text/javascript; charset=utf-8")
             elif path == "/style.css":
                 self._send_file(STATIC_DIR / "style.css", "text/css; charset=utf-8")
             elif path.startswith("/fonts/"):

@@ -125,13 +125,19 @@ def main():
         import gi
 
         gi.require_version("Gio", "2.0")
-        gi.require_version("GioUnix", "2.0")
         gi.require_version("Gtk", "3.0")
         gi.require_version("GdkPixbuf", "2.0")
-        from gi.repository import Gio, GioUnix, Gtk, GdkPixbuf
+        from gi.repository import Gio, Gtk, GdkPixbuf
+        try:
+            # GLib 2.80+ moved DesktopAppInfo into GioUnix.
+            gi.require_version("GioUnix", "2.0")
+            from gi.repository import GioUnix
+        except (ImportError, ValueError):
+            # Older GLib (e.g. 2.72 on Ubuntu 22.04) provides it in Gio.
+            GioUnix = Gio
     except (ImportError, ValueError) as error:
         raise RuntimeError(
-            "Native icon import requires system Python PyGObject and GioUnix/GTK 3/"
+            "Native icon import requires system Python PyGObject and Gio/GTK 3/"
             "GdkPixbuf introspection data (with an SVG loader for SVG icons): " + str(error)
         ) from error
 

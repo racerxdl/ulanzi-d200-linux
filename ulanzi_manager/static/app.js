@@ -1,3 +1,5 @@
+const { t, tc } = window.i18n;
+
 const state = {
   config: null,
   layouts: [],
@@ -17,6 +19,8 @@ const state = {
   applicationsError: "",
   applicationsRequest: null,
   applicationIconImports: new Map(),
+  saveState: ["Configuração carregada"],
+  mosaicStatus: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -94,7 +98,7 @@ const elements = {
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Erro HTTP ${response.status}`);
+  if (!response.ok) throw new Error(window.i18n.message(data.error) || t("Erro HTTP {status}", { status: response.status }));
   return data;
 }
 
@@ -119,15 +123,26 @@ function toast(message, error = false) {
   toast.timer = window.setTimeout(() => elements.toast.classList.remove("visible"), 3600);
 }
 
+function setSaveState(text, params) {
+  state.saveState = [text, params];
+  elements.saveState.textContent = t(text, params);
+}
+
+function setMosaicStatus(text, translate = true) {
+  state.mosaicStatus = [text, translate];
+  elements.mosaicPreviewStatus.textContent = translate ? t(text) : text;
+}
+
 function markDirty() {
   state.dirty = true;
-  elements.saveState.textContent = "Alterações não salvas";
+  setSaveState("Alterações não salvas");
 }
 
 function setStatus(element, online, onlineText, offlineText) {
+  element.statusArgs = [online, onlineText, offlineText];
   element.classList.toggle("online", online);
   element.classList.toggle("offline", !online);
-  element.lastChild.textContent = online ? onlineText : offlineText;
+  element.lastChild.textContent = t(online ? onlineText : offlineText);
 }
 
 async function refreshStatus() {
@@ -307,7 +322,7 @@ function renderBackgroundOverview() {
       "preview-background",
     );
   } else {
-    wide.textContent = "Tela larga preservada";
+    wide.textContent = t("Tela larga preservada");
   }
   elements.backgroundOverview.append(wide);
 }
@@ -331,7 +346,7 @@ function renderLayouts(selectedId = state.selectedLayoutId) {
   if (!state.layouts.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = "Nenhum layout salvo. Salve o layout atual para vê-lo aqui.";
+    empty.textContent = t("Nenhum layout salvo. Salve o layout atual para vê-lo aqui.");
     elements.savedLayouts.append(empty);
   }
   state.layouts.forEach((layout) => {
@@ -339,7 +354,7 @@ function renderLayouts(selectedId = state.selectedLayoutId) {
     card.type = "button";
     card.className = "layout-card";
     card.dataset.layoutId = layout.id;
-    card.setAttribute("aria-label", `Selecionar layout ${layout.name}`);
+    card.setAttribute("aria-label", t("Selecionar layout {name}", { name: layout.name }));
     card.setAttribute("aria-busy", "true");
     const title = document.createElement("strong");
     title.textContent = layout.name;
@@ -348,7 +363,7 @@ function renderLayouts(selectedId = state.selectedLayoutId) {
     preview.setAttribute("aria-hidden", "true");
     const status = document.createElement("span");
     status.className = "hint";
-    status.textContent = "Carregando imagem…";
+    status.textContent = t("Carregando imagem…");
     card.append(preview, title, status);
     card.addEventListener("click", () => selectSavedLayout(layout.id));
     elements.savedLayouts.append(card);
@@ -359,7 +374,7 @@ function renderLayouts(selectedId = state.selectedLayoutId) {
       card.setAttribute("aria-busy", "false");
     }).catch((error) => {
       if (token !== state.layoutsRenderToken || !card.isConnected) return;
-      status.textContent = `Não foi possível carregar a imagem: ${error.message}`;
+      status.textContent = t("Não foi possível carregar a imagem: {error}", { error: error.message });
       card.setAttribute("aria-busy", "false");
     });
   });
@@ -375,12 +390,12 @@ async function refreshLayouts(selectedId = "") {
 async function saveNamedLayout() {
   const name = elements.layoutName.value.trim();
   if (!name) {
-    toast("Informe um nome para o layout", true);
+    toast(t("Informe um nome para o layout"), true);
     elements.layoutName.focus();
     return;
   }
   elements.saveLayout.disabled = true;
-  elements.saveLayout.textContent = "Salvando…";
+  elements.saveLayout.textContent = t("Salvando…");
   try {
     await Promise.all(state.applicationIconImports.values());
     const saved = await api("/api/layouts", {
@@ -390,19 +405,19 @@ async function saveNamedLayout() {
     });
     await refreshLayouts(saved.id);
     elements.layoutName.value = saved.name;
-    toast(`Layout “${saved.name}” salvo`);
+    toast(t("Layout “{name}” salvo", { name: saved.name }));
   } catch (error) {
     toast(error.message, true);
   } finally {
     elements.saveLayout.disabled = false;
-    elements.saveLayout.textContent = "Salvar layout";
+    elements.saveLayout.textContent = t("Salvar layout");
   }
 }
 
 async function loadNamedLayout() {
   const layoutId = state.selectedLayoutId;
   if (!layoutId) return;
-  if (state.dirty && !window.confirm("Descartar alterações não salvas e carregar este layout?")) {
+  if (state.dirty && !window.confirm(t("Descartar alterações não salvas e carregar este layout?"))) {
     return;
   }
   elements.loadLayout.disabled = true;
@@ -414,11 +429,11 @@ async function loadNamedLayout() {
     state.dirty = true;
     state.iconVersion = Date.now();
     elements.layoutName.value = loaded.layout.name;
-    elements.saveState.textContent = `Layout “${loaded.layout.name}” carregado; falta aplicar`;
+    setSaveState("Layout “{name}” carregado; falta aplicar", { name: loaded.layout.name });
     renderGlobalSettings();
     renderGrid();
     renderEditor();
-    toast(`Layout “${loaded.layout.name}” carregado no editor`);
+    toast(t("Layout “{name}” carregado no editor", { name: loaded.layout.name }));
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -430,13 +445,13 @@ async function deleteNamedLayout() {
   const layoutId = state.selectedLayoutId;
   const layout = state.layouts.find((item) => item.id === layoutId);
   if (!layout) return;
-  if (!window.confirm(`Excluir o layout “${layout.name}”?`)) return;
+  if (!window.confirm(t("Excluir o layout “{name}”?", { name: layout.name }))) return;
   elements.deleteLayout.disabled = true;
   try {
     await api(`/api/layouts/${encodeURIComponent(layoutId)}`, { method: "DELETE" });
     elements.layoutName.value = "";
     await refreshLayouts();
-    toast(`Layout “${layout.name}” excluído`);
+    toast(t("Layout “{name}” excluído", { name: layout.name }));
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -481,7 +496,7 @@ function renderGrid() {
     card.classList.toggle("selected", index === state.selected);
     card.classList.toggle("disabled", !button.enabled);
     card.classList.toggle("has-background", Boolean(button.background_tile));
-    card.setAttribute("aria-label", `Editar ou mover botão ${index + 1}`);
+    card.setAttribute("aria-label", t("Editar ou mover botão {number}", { number: index + 1 }));
 
     const iconSource = button.icon_source || button.image;
     const statsDisplay = index === 13 && button.display_mode === "stats";
@@ -571,7 +586,7 @@ function refreshIconOptions(selectedName) {
   const wide = state.selected === 13;
   const empty = document.createElement("option");
   empty.value = "";
-  empty.textContent = wide ? "Selecione um GIF" : "Selecione um ícone";
+  empty.textContent = t(wide ? "Selecione um GIF" : "Selecione um ícone");
   elements.icon.append(empty);
   state.config.icons
     .filter((name) => wide ? name.toLowerCase().endsWith(".gif") : name.toLowerCase().endsWith(".png"))
@@ -600,7 +615,7 @@ function renderIconPreview(name, scale = 100, backgroundName = "") {
   if (!button.enabled || !name) {
     if (!backgroundName) {
       const text = document.createElement("span");
-      text.textContent = "Sem ícone";
+      text.textContent = t("Sem ícone");
       elements.iconPreview.append(text);
     }
     return;
@@ -610,7 +625,7 @@ function renderIconPreview(name, scale = 100, backgroundName = "") {
   image.src = iconUrl(name);
   image.style.setProperty("--logo-scale", `${scale}%`);
   setForegroundSize(image, button, wide, scale);
-  image.alt = "Prévia do ícone";
+  image.alt = t("Prévia do ícone");
   elements.iconPreview.append(image);
 }
 
@@ -637,7 +652,7 @@ function obsActionField(button) {
   const wrapper = document.createElement("label");
   wrapper.className = "field";
   const title = document.createElement("span");
-  title.textContent = "Operação do OBS";
+  title.textContent = t("Operação do OBS");
   const select = document.createElement("select");
   const actions = [
     ["toggle_scene", "Alternar entre cenas"],
@@ -649,7 +664,7 @@ function obsActionField(button) {
   actions.forEach(([value, label]) => {
     const option = document.createElement("option");
     option.value = value;
-    option.textContent = label;
+    option.textContent = t(label);
     select.append(option);
   });
   select.value = button.params.action || "toggle_recording";
@@ -709,7 +724,7 @@ function importSelectedApplicationIcon(button, application) {
       });
       if (!isCurrent()) return;
       if (!result.filename) {
-        toast("Aplicativo sem ícone disponível; ícone atual mantido");
+        toast(t("Aplicativo sem ícone disponível; ícone atual mantido"));
         return;
       }
       if (!state.config.icons.includes(result.filename)) {
@@ -723,7 +738,7 @@ function importSelectedApplicationIcon(button, application) {
       renderGrid();
       if (state.config.buttons[state.selected] === button) renderEditor();
     } catch (error) {
-      if (isCurrent()) toast(`Não foi possível obter o ícone: ${error.message}`, true);
+      if (isCurrent()) toast(t("Não foi possível obter o ícone: {error}", { error: error.message }), true);
     } finally {
       if (state.applicationIconImports.get(button) === request) {
         state.applicationIconImports.delete(button);
@@ -738,17 +753,17 @@ function applicationFields(button) {
   wrapper.className = "application-picker";
   const params = button.params;
   let manualMode = null;
-  const searchField = field("Pesquisar aplicativos", "", updateOptions, {
+  const searchField = field(t("Pesquisar aplicativos"), "", updateOptions, {
     id: "applicationSearch",
     type: "search",
-    placeholder: "Digite o nome do aplicativo",
+    placeholder: t("Digite o nome do aplicativo"),
     dirty: false,
   });
   const search = searchField.querySelector("input");
   const selectField = document.createElement("label");
   selectField.className = "field";
   const title = document.createElement("span");
-  title.textContent = "Aplicativo instalado";
+  title.textContent = t("Aplicativo instalado");
   const select = document.createElement("select");
   select.id = "applicationSelect";
   selectField.append(title, select);
@@ -759,7 +774,7 @@ function applicationFields(button) {
   status.setAttribute("aria-live", "polite");
   search.setAttribute("aria-describedby", status.id);
   select.setAttribute("aria-describedby", status.id);
-  const manualField = field("Executável", params.name, (value) => {
+  const manualField = field(t("Executável"), params.name, (value) => {
     manualMode = true;
     params.name = value;
   }, { id: "applicationExecutable", placeholder: "firefox" });
@@ -788,11 +803,11 @@ function applicationFields(button) {
     placeholder.value = "__choose__";
     placeholder.disabled = true;
     placeholder.textContent = current && !currentVisible
-      ? `${current.name} (fora da pesquisa)`
-      : "Selecione um aplicativo";
+      ? t("{name} (fora da pesquisa)", { name: current.name })
+      : t("Selecione um aplicativo");
     const manualOption = document.createElement("option");
     manualOption.value = "";
-    manualOption.textContent = "Informar executável manualmente";
+    manualOption.textContent = t("Informar executável manualmente");
     select.replaceChildren(placeholder, manualOption);
     filtered.forEach((app) => {
       const option = document.createElement("option");
@@ -807,15 +822,18 @@ function applicationFields(button) {
     wrapper.setAttribute("aria-busy", String(state.applicationsStatus === "loading"));
     status.classList.toggle("error", state.applicationsStatus === "error");
     if (state.applicationsStatus === "loading") {
-      status.textContent = "Carregando aplicativos instalados…";
+      status.textContent = t("Carregando aplicativos instalados…");
     } else if (state.applicationsStatus === "error") {
-      status.textContent = `Não foi possível carregar os aplicativos: ${state.applicationsError}. Você pode informar o executável manualmente.`;
+      status.textContent = t(
+        "Não foi possível carregar os aplicativos: {error}. Você pode informar o executável manualmente.",
+        { error: state.applicationsError },
+      );
     } else if (!applications.length) {
-      status.textContent = "Nenhum aplicativo instalado encontrado. Você pode informar o executável manualmente.";
+      status.textContent = t("Nenhum aplicativo instalado encontrado. Você pode informar o executável manualmente.");
     } else if (!filtered.length) {
-      status.textContent = "Nenhum aplicativo corresponde à pesquisa.";
+      status.textContent = t("Nenhum aplicativo corresponde à pesquisa.");
     } else {
-      status.textContent = `${filtered.length} de ${applications.length} aplicativos`;
+      status.textContent = t("{shown} de {total} aplicativos", { shown: filtered.length, total: applications.length });
     }
   }
 
@@ -847,25 +865,25 @@ function applicationFields(button) {
 function renderActionFields(button) {
   elements.actionFields.replaceChildren();
   if (button.action === "command") {
-    elements.actionFields.append(field("Comando", button.params.cmd, (value) => { button.params.cmd = value; }, { placeholder: "notify-send 'Olá'" }));
+    elements.actionFields.append(field(t("Comando"), button.params.cmd, (value) => { button.params.cmd = value; }, { placeholder: t("notify-send 'Olá'") }));
   } else if (button.action === "app") {
     elements.actionFields.append(applicationFields(button));
   } else if (button.action === "key") {
-    elements.actionFields.append(field("Combinação de teclas", button.params.keys, (value) => { button.params.keys = value; }, { placeholder: "ctrl+alt+t" }));
+    elements.actionFields.append(field(t("Combinação de teclas"), button.params.keys, (value) => { button.params.keys = value; }, { placeholder: "ctrl+alt+t" }));
   } else if (button.action === "obs") {
     elements.actionFields.append(obsActionField(button));
     const operation = button.params.action;
     if (operation === "toggle_scene") {
       elements.actionFields.append(
-        field("Cena A", button.params.scene1, (value) => { button.params.scene1 = value; }),
-        field("Cena B", button.params.scene2, (value) => { button.params.scene2 = value; }),
+        field(t("Cena A"), button.params.scene1, (value) => { button.params.scene1 = value; }),
+        field(t("Cena B"), button.params.scene2, (value) => { button.params.scene2 = value; }),
       );
     } else if (operation === "set_scene") {
-      elements.actionFields.append(field("Cena", button.params.scene, (value) => { button.params.scene = value; }));
+      elements.actionFields.append(field(t("Cena"), button.params.scene, (value) => { button.params.scene = value; }));
     } else if (operation === "toggle_source") {
       elements.actionFields.append(
-        field("Cena", button.params.scene, (value) => { button.params.scene = value; }),
-        field("Fonte", button.params.source, (value) => { button.params.source = value; }),
+        field(t("Cena"), button.params.scene, (value) => { button.params.scene = value; }),
+        field(tc("obs", "Fonte"), button.params.source, (value) => { button.params.source = value; }),
       );
     }
   }
@@ -876,13 +894,15 @@ function renderEditor() {
   const wide = state.selected === 13;
   const statsDisplay = wide && button.display_mode === "stats";
   const backgroundDisplay = wide && button.display_mode === "background";
-  elements.editorTitle.textContent = wide ? "Botão 14 · tela larga" : `Botão ${state.selected + 1}`;
+  elements.editorTitle.textContent = wide
+    ? t("Botão 14 · tela larga")
+    : t("Botão {number}", { number: state.selected + 1 });
   elements.position.replaceChildren();
   state.config.buttons.forEach((_, index) => {
     if ((wide && index !== 13) || (!wide && index === 13)) return;
     const option = document.createElement("option");
     option.value = index;
-    option.textContent = wide ? "Posição fixa da tela" : `Posição ${index + 1}`;
+    option.textContent = wide ? t("Posição fixa da tela") : t("Posição {number}", { number: index + 1 });
     elements.position.append(option);
   });
   elements.position.value = state.selected;
@@ -923,10 +943,10 @@ function renderEditor() {
   elements.logoScale.value = iconScale;
   elements.logoScaleValue.textContent = `${iconScale}%`;
   elements.upload.accept = wide ? "image/gif,.gif" : "image/png,image/jpeg,image/webp";
-  elements.uploadText.textContent = wide ? "Enviar GIF" : "Enviar imagem";
-  elements.iconHelp.textContent = wide
+  elements.uploadText.textContent = t(wide ? "Enviar GIF" : "Enviar imagem");
+  elements.iconHelp.textContent = t(wide
     ? "GIF animado. Ajustado para 458 × 196, até 300 quadros e 8 MB."
-    : "PNG, JPG ou WebP. Ajustado para 196 × 196.";
+    : "PNG, JPG ou WebP. Ajustado para 196 × 196.");
   const actionEnabled = !wide || Boolean(button.action_enabled);
   elements.wideActionToggle.hidden = !wide;
   elements.wideActionEnabled.checked = actionEnabled;
@@ -1013,7 +1033,7 @@ function bindEvents() {
       && !String(button.image || "").toLowerCase().endsWith(".png")
     ) {
       elements.wideDisplayMode.value = button.display_mode;
-      toast("Aplique uma imagem de fundo antes de selecionar este modo", true);
+      toast(t("Aplique uma imagem de fundo antes de selecionar este modo"), true);
       return;
     }
     button.display_mode = requestedMode;
@@ -1127,7 +1147,7 @@ async function uploadIcon() {
   const file = elements.upload.files[0];
   if (!file) return;
   if (file.size > 8 * 1024 * 1024) {
-    toast("A imagem deve ter no máximo 8 MB", true);
+    toast(t("A imagem deve ter no máximo 8 MB"), true);
     elements.upload.value = "";
     return;
   }
@@ -1152,7 +1172,7 @@ async function uploadIcon() {
     markDirty();
     renderEditor();
     renderGrid();
-    toast(state.selected === 13 ? "GIF preparado e adicionado" : "Imagem preparada e adicionada");
+    toast(t(state.selected === 13 ? "GIF preparado e adicionado" : "Imagem preparada e adicionada"));
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -1198,7 +1218,7 @@ function renderMosaicPreview(result) {
   if (result.background.include_wide) {
     appendPreviewImage(wide, result.filenames[13], "preview-background");
   } else {
-    wide.textContent = "Tela larga preservada";
+    wide.textContent = t("Tela larga preservada");
   }
   elements.mosaicPreview.append(wide);
 }
@@ -1215,7 +1235,7 @@ function updateMosaicPreview() {
   elements.mosaicDarknessValue.textContent = `${settings.darkness}%`;
   elements.applyMosaic.disabled = true;
   state.mosaicPreviewResult = null;
-  elements.mosaicPreviewStatus.textContent = "Preparando prévia…";
+  setMosaicStatus("Preparando prévia…");
   elements.mosaicPreview.setAttribute("aria-busy", "true");
   clearTimeout(state.mosaicPreviewTimer);
   const token = ++state.mosaicPreviewToken;
@@ -1232,11 +1252,11 @@ function updateMosaicPreview() {
       if (token !== state.mosaicPreviewToken) return;
       state.mosaicPreviewResult = result;
       renderMosaicPreview(result);
-      elements.mosaicPreviewStatus.textContent = "Prévia dos recortes que serão aplicados";
+      setMosaicStatus("Prévia dos recortes que serão aplicados");
       elements.applyMosaic.disabled = false;
     } catch (error) {
       if (token === state.mosaicPreviewToken) {
-        elements.mosaicPreviewStatus.textContent = error.message;
+        setMosaicStatus(error.message, false);
         toast(error.message, true);
       }
     } finally {
@@ -1251,7 +1271,7 @@ async function selectMosaicImage() {
   const file = elements.mosaicUpload.files[0];
   if (!file) return;
   if (file.size > 8 * 1024 * 1024) {
-    toast("A imagem deve ter no máximo 8 MB", true);
+    toast(t("A imagem deve ter no máximo 8 MB"), true);
     elements.mosaicUpload.value = "";
     return;
   }
@@ -1262,7 +1282,7 @@ async function selectMosaicImage() {
       { scale: 100, darkness: 0, include_wide: false },
     );
   } catch (error) {
-    toast("Não foi possível abrir a imagem", true);
+    toast(t("Não foi possível abrir a imagem"), true);
   } finally {
     elements.mosaicUpload.value = "";
   }
@@ -1289,12 +1309,12 @@ function applyMosaic() {
   markDirty();
   renderGrid();
   renderEditor();
-  toast("Fundo preparado; use “Salvar e aplicar” para enviá-lo ao D200");
+  toast(t("Fundo preparado; use “Salvar e aplicar” para enviá-lo ao D200"));
 }
 
 async function saveAndApply() {
   elements.save.disabled = true;
-  elements.save.textContent = "Aplicando…";
+  elements.save.textContent = t("Aplicando…");
   try {
     await Promise.all(state.applicationIconImports.values());
     const saved = await api("/api/config", {
@@ -1310,18 +1330,18 @@ async function saveAndApply() {
     });
     state.dirty = false;
     state.iconVersion = Date.now();
-    elements.saveState.textContent = "Salvo e aplicado no dispositivo";
+    setSaveState("Salvo e aplicado no dispositivo");
     renderGlobalSettings();
     renderGrid();
     renderEditor();
     await refreshStatus();
-    toast("Configuração aplicada no D200");
+    toast(t("Configuração aplicada no D200"));
   } catch (error) {
-    elements.saveState.textContent = "Não foi possível aplicar";
+    setSaveState("Não foi possível aplicar");
     toast(error.message, true);
   } finally {
     elements.save.disabled = false;
-    elements.save.textContent = "Salvar e aplicar";
+    elements.save.textContent = t("Salvar e aplicar");
   }
 }
 
@@ -1341,10 +1361,29 @@ async function init() {
     await refreshStatus();
     window.setInterval(refreshStatus, 5000);
   } catch (error) {
-    toast(`Falha ao carregar: ${error.message}`, true);
+    toast(t("Falha ao carregar: {error}", { error: error.message }), true);
     elements.save.disabled = true;
     elements.saveLayout.disabled = true;
   }
 }
+
+// Redraw everything built by this script when the language changes; i18n.js
+// has already re-translated the static page by the time this event fires.
+function applyLanguage() {
+  setSaveState(...state.saveState);
+  [elements.deviceStatus, elements.serviceStatus].forEach((element) => {
+    if (element.statusArgs) setStatus(element, ...element.statusArgs);
+  });
+  if (!elements.save.disabled) elements.save.textContent = t("Salvar e aplicar");
+  if (!elements.saveLayout.disabled) elements.saveLayout.textContent = t("Salvar layout");
+  if (state.mosaicStatus) setMosaicStatus(...state.mosaicStatus);
+  if (!state.config) return;
+  renderLayouts();
+  renderGrid();
+  renderEditor();
+  if (state.mosaicPreviewResult) renderMosaicPreview(state.mosaicPreviewResult);
+}
+
+window.addEventListener("ulanzi:languagechange", applyLanguage);
 
 init();

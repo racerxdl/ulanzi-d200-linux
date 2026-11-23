@@ -82,6 +82,18 @@ h2 { font-size: 1.15rem; letter-spacing: -.02em; }
 .eyebrow { margin-bottom: 5px; color: var(--accent); font-size: .68rem; font-weight: 800; letter-spacing: .16em; }
 
 .header-actions, .status-group { display: flex; align-items: center; gap: 12px; }
+.language-select {
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  background: #0b0f14;
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+  font-size: .8rem;
+}
+.language-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 107, 53, .1); }
 .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: .8rem; white-space: nowrap; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: #697483; box-shadow: 0 0 0 4px rgba(105, 116, 131, .12); }
 .status.online { color: var(--text); }

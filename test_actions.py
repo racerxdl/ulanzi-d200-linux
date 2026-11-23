@@ -12,6 +12,7 @@ import time
 import unittest
 import uuid
 
+from ulanzi_manager.actions import _systemd_run_expands_environment
 from ulanzi_manager.native import native_python
 
 
@@ -98,7 +99,7 @@ class IndependentLaunchTests(unittest.TestCase):
         )
         command = [
             'systemd-run', '--user', '--quiet', '--collect',
-            '--expand-environment=no',
+            *(['--expand-environment=no'] if _systemd_run_expands_environment() else []),
             '--unit', self.unit, '--property=Type=exec',
             '--working-directory', str(self.cwd),
         ]

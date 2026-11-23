@@ -6,13 +6,20 @@ import shutil
 import subprocess
 import sys
 
+# DesktopAppInfo lives in GioUnix on GLib 2.80+ and in Gio on older releases
+# (e.g. GLib 2.72 on Ubuntu 22.04); accept either.
 _PROBE = (
     "import gi; "
-    "gi.require_version('GioUnix', '2.0'); "
     "gi.require_version('Gtk', '3.0'); "
     "gi.require_version('Gdk', '3.0'); "
     "gi.require_version('GdkPixbuf', '2.0'); "
-    "from gi.repository import Gio, GioUnix, Gtk, Gdk, GdkPixbuf"
+    "from gi.repository import Gio, Gtk, Gdk, GdkPixbuf\n"
+    "try:\n"
+    "    gi.require_version('GioUnix', '2.0')\n"
+    "    from gi.repository import GioUnix as DesktopGio\n"
+    "except (ImportError, ValueError):\n"
+    "    DesktopGio = Gio\n"
+    "DesktopGio.DesktopAppInfo"
 )
 
 
@@ -58,7 +65,7 @@ def native_python():
     detail = '; '.join(failures) or 'no Python executable found'
     raise RuntimeError(
         'No desktop-capable Python found. Set ULANZI_GI_PYTHON to a Python '
-        'executable with PyGObject and GioUnix/GTK 3/GdkPixbuf; on NixOS use '
+        'executable with PyGObject and Gio (or GioUnix)/GTK 3/GdkPixbuf; on NixOS use '
         'python3.withPackages (ps: [ ps.pygobject3 ]) and provide GI_TYPELIB_PATH. '
         + detail
     )

@@ -2,6 +2,7 @@
 
 import subprocess
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Any
 from abc import ABC, abstractmethod
@@ -11,12 +12,30 @@ from ulanzi_manager.native import native_python
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
+def _systemd_run_expands_environment() -> bool:
+    """systemd-run gained --expand-environment (and expansion) in systemd 254.
+
+    Older releases such as Ubuntu 22.04's systemd 249 reject the option, but
+    they never expand $VARs in the command, so omitting it is equivalent.
+    """
+    try:
+        first_line = subprocess.run(
+            ['systemd-run', '--version'], capture_output=True, text=True,
+            timeout=5, check=False,
+        ).stdout.split('\n', 1)[0]
+        return int(first_line.split()[1]) >= 254
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return False
+
+
 def _launch_independent(command, *, desktop=False, env=None):
     """Keep launched applications outside the daemon's restart/stop cgroup."""
+    options = ['--expand-environment=no'] if _systemd_run_expands_environment() else []
     return subprocess.Popen(
         [
             'systemd-run', '--user', '--scope', '--collect', '--quiet',
-            '--expand-environment=no', '--', *command,
+            *options, '--', *command,
         ],
         stdout=None if desktop else subprocess.DEVNULL,
         stderr=None,
