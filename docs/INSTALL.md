@@ -60,7 +60,7 @@ The daemon service starts at user login, and **Save and apply** can restart it.
 The package sets its GTK helper interpreter; do not run `install.sh`, which
 creates a mutable virtual environment.
 
-Installed-app launch and icon import select a Python with native GTK/GIO bindings rather than assuming `/usr/bin/python3` exists. `ULANZI_GI_PYTHON` explicitly selects the interpreter; the flake sets it automatically. GioUnix introspection requires GLib 2.80 or newer. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
+Installed-app launch and icon import select a Python with native GTK/GIO bindings rather than assuming `/usr/bin/python3` exists. `ULANZI_GI_PYTHON` explicitly selects the interpreter; the flake sets it automatically. `DesktopAppInfo` comes from GioUnix on GLib 2.80 or newer and from Gio on older releases (for example GLib 2.72 on Ubuntu 22.04). Command and app actions also work with systemd releases older than 254, which lack `systemd-run --expand-environment`. GdkPixbuf and its SVG loader decode application icons; keep the system MIME database available when customizing `XDG_DATA_DIRS`.
 
 Both helpers remove inherited Python path/home overrides, disable user-site
 packages with `-s`, and preserve paths established by the selected wrapper.

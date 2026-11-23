@@ -10,13 +10,19 @@ def main() -> int:
     import gi
 
     gi.require_version("Gio", "2.0")
-    gi.require_version("GioUnix", "2.0")
     gi.require_version("Gdk", "3.0")
-    from gi.repository import Gdk, GioUnix, GLib
+    from gi.repository import Gdk, GLib
+    try:
+        # GLib 2.80+ moved DesktopAppInfo into GioUnix.
+        gi.require_version("GioUnix", "2.0")
+        from gi.repository import GioUnix as DesktopGio
+    except (ImportError, ValueError):
+        # Older GLib (e.g. 2.72 on Ubuntu 22.04) provides it in Gio.
+        from gi.repository import Gio as DesktopGio
 
     if len(sys.argv) != 2:
         raise ValueError("Usage: desktop_launcher.py DESKTOP_FILE")
-    app = GioUnix.DesktopAppInfo.new_from_filename(sys.argv[1])
+    app = DesktopGio.DesktopAppInfo.new_from_filename(sys.argv[1])
     if app is None:
         raise ValueError(f"Invalid desktop launcher: {sys.argv[1]}")
     Gdk.init_check([])
